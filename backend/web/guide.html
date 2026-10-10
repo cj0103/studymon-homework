@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>冒险指南 · StudyMon 作业冒险</title>
+<style>
+:root { --red:#e3350d; --blue:#3b82f6; --bg:#f5f6fa; }
+* { box-sizing:border-box; margin:0; font-family:"PingFang SC","Microsoft YaHei",sans-serif; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); max-width:520px; margin:0 auto; padding-bottom:40px; }
+header { background:var(--red); color:#fff; padding:14px 16px; font-size:19px; font-weight:700; position:sticky; top:0; z-index:5; display:flex; justify-content:space-between; align-items:center; }
+header a { color:#fff; text-decoration:none; font-size:14px; font-weight:400; }
+.card { background:#fff; border-radius:14px; margin:12px; padding:14px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+h3 { margin-bottom:8px; }
+.region { border-left:5px solid var(--red); }
+.region.lock { border-left-color:#bbb; opacity:.75; }
+.pill { display:inline-block; border-radius:8px; padding:2px 8px; margin:3px 4px 0 0; font-size:13px; background:#f0f1f5; }
+.pill.own { background:#dcfce7; }
+.pill img { width:22px; height:22px; vertical-align:-5px; margin-right:3px; }
+.lvrange { color:#64748b; font-size:12px; }
+.gymline { background:#fef9c3; border-radius:10px; padding:8px 10px; font-size:14px; margin-top:8px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+td,th { padding:5px 4px; border-bottom:1px solid #f0f0f0; text-align:left; }
+.badge { display:inline-block; width:16px; text-align:center; }
+.stbadge { font-size:12px; padding:2px 8px; border-radius:9px; color:#fff; white-space:nowrap; }
+.st-poison { background:#a855f7; } .st-para { background:#f59e0b; } .st-sleep { background:#6b7280; }
+.st-burn { background:#f97316; } .st-freeze { background:#38bdf8; } .st-confuse { background:#ec4899; }
+</style>
+</head>
+<body>
+<header><span>🗺️ 冒险指南</span><a href="/">‹ 返回</a></header>
+<div id="app">加载中…</div>
+<script>
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function load(){
+  const tk = localStorage.getItem("pkm_token");
+  let kidTok = null;
+  if (!tk) {   // 冷开指南页（无内存中JWT）：用设备链接换 JWT；导航进入时已有token走上面
+    const k = new URLSearchParams(location.search).get("k") || localStorage.getItem("pkm_kid");
+    if (k) { const rr = await fetch("/api/resolve/"+encodeURIComponent(k));
+             if (rr.ok) { const j = await rr.json(); kidTok = j.token;
+                          if (j.token) localStorage.setItem("pkm_token", j.token); } }
+  }
+  const auth = tk || kidTok;
+  const r = await fetch("/api/child/guide", {headers:{Authorization:"Bearer "+auth}});
+  if(!r.ok){ document.getElementById("app").innerHTML = '<div class="card">😵 加载失败，请<a href="/">从首页重新进入</a></div>'; return; }
+  const g = await r.json();
+  const gymBadges = g.gyms.map(x=>x.badge_name);
+  const giftHtml = (g.gym_gifts||[]).map(x=>`
+    <tr>
+      <td>第${x.gym_sort}馆<br><span style="font-size:11px;color:#888">${esc(x.badge_name)}</span></td>
+      <td><img src="/static/artwork/thumb/${x.pokedex_no}.png" loading="lazy" style="width:32px;height:32px;vertical-align:middle" onerror="this.style.display='none'">
+        ${x.obtained?esc(x.name):"？？？"}</td>
+      <td style="font-size:12px">${x.obtained?(x.sealed?'<span style="color:#7c3aed">🔒 封印中</span>':'<span style="color:#16a34a">✅ 已激活</span>'):'<span style="color:#bbb">通关后赠送</span>'}</td>
+    </tr>`).join("");
+  document.getElementById("app").innerHTML = `
+  <div class="card" style="background:linear-gradient(135deg,#fff7ed,#ffedd5)">
+    <h3>🎯 收集进度：<span style="color:var(--red)">${g.owned}</span> / ${g.total} 只</h3>
+    <div style="font-size:13px;color:#92400e;line-height:1.8">
+      关都分为 <b>8 个大区域</b>，每区一座道馆——打赢道馆拿徽章就解锁下一片区域。<br>
+      冒险页的「野生遭遇」在当前区域随机遇到下方清单里的宝可梦，<b>每周可捕捉 3 次</b>。<br>
+      皮卡丘是你的<b>不进化伙伴</b>（像动画里一样拒绝进化！），想要雷丘要自己去<span class="lv">区域2·发电厂一带</span>抓。<br>
+      其余宝可梦到级就会自动进化，进化后新招式自动学会。<br>
+      <b>⛰️ 野怪等级本区固定</b>：每区野怪等级都不超过本区道馆推荐等级（推荐级−4 封顶），
+      强怪只出现在后面的区域——练好队再去下一片地盘，永远既有得打又有挑战。</div></div>
+  ${g.regions.map(rg=>{
+    const gyms = rg.gyms || [];
+    const goal = rg.unlock_badges===0 ? "一开始就开放" :
+      `集齐 ${rg.unlock_badges} 枚徽章（到【${gymBadges[rg.unlock_badges-1]}】）解锁`;
+    return `<div class="card region ${rg.unlocked?"":"lock"}">
+      <h3>${rg.unlocked?"✅":"🔒"} 区域${rg.id} · ${esc(rg.name)}
+        <span style="float:right;font-size:12px;color:#888">${rg.pokemon.length} 种</span></h3>
+      <div style="font-size:13px;color:#666">${goal}</div>
+      <div class="gymline">🏅 本区征战目标：${gyms.map(x=>`${esc(x.gym_name)}<span class="lv">(推荐Lv${x.recommend_level})</span>`).join("　")}<br>
+      <span style="color:#a16207;font-size:12px">打败他们获得【${gyms.map(x=>esc(x.badge_name)).join("】【")}】，${rg.id<8?"并解锁下一片野外地盘":"集齐8枚徽章后，石英高原冠军联赛见！"}！</span></div>
+      <div style="margin-top:8px">${rg.pokemon.map(p=>
+        `<span class="pill ${p.owned?"own":""}" title="${esc(p.type1)}${p.type2?"/"+esc(p.type2):""} Lv${p.lo}~${p.hi}">
+          <img src="/static/artwork/thumb/${p.pokedex_no}.png" loading="lazy" onerror="this.style.display='none'">${p.owned?esc(p.name):"？？？"}</span>`).join("")}</div>
+    </div>`;
+  }).join("")}
+  <div class="card" style="background:linear-gradient(135deg,#faf5ff,#f3e8ff)">
+    <h3>🎁 道馆礼物 · 封印宝可梦</h3>
+    <div style="font-size:13px;color:#6b21a8;line-height:1.9;margin-bottom:8px">
+      每打败一座道馆，就会收到一只<b>传说中的神秘伙伴</b>！不过它们被封印着——
+      <b>从获得那天起，连续打卡获批满 ${g.seal_need||7} 天</b>就会自动解除封印加入背包
+      （中断了这只重新数，不影响你的 🔥 大联击）。<br>
+      🔓 <b>激活时达到赠礼道馆的推荐等级</b>：比如小刚送的卡比兽，解锁时就是 Lv16（小刚的推荐等级），
+      道馆越强送的伙伴解锁时等级越高；到级该会的招式也一起学会，即刻就能上场战斗。<br>
+      首页能看到每只伙伴的封印进度（x/${g.seal_need||7}），断了这只就从第 1 天重新数，加油！</div>
+    <table><tr><th>道馆</th><th>礼物</th><th>状态</th></tr>${giftHtml}</table></div>
+  <div class="card"><h3>📖 还有哪些抓不到？</h3>
+    <div style="font-size:13px;color:#555;line-height:2">
+    · 地图上只出没<b>未进化形态</b>（和少数中间形态）——<b>进化型</b>（妙蛙花/喷火龙/比雕等）靠抓到初始形态、打卡升级<b>自动进化</b>获得，打不过他们就先在你的队伍里培养出来<br>
+    · <b>御三家</b>是稀有遭遇：妙蛙种子藏在区域2（华蓝市郊外）、小火龙在区域3（10号道路）、杰尼龟在区域4（玉虹海边），致敬原作剧情，遇到就是运气！<br>
+    · <b>雷丘</b>在区域3发电厂出没（皮卡丘进化后的样子，野外的它很强，小心）<br>
+    · <b>传说伙伴 8 只</b>（卡比兽/急冻鸟/闪电鸟/火焰鸟/超梦/化石翼龙/梦幻/多边兽）：打道馆赠送，见上方「道馆礼物」<br>
+    · <b>菊石兽、化石盔</b>：藏在主线最后两个区域的野生池里，耐心找找<br>
+    · <b>伊布</b>：区域4（玉虹~双子岛群岛）可捕捉；水伊布/雷伊布/火伊布 3 个分支<b>节日限定</b>，敬请期待<br>
+    · 收集口径：野生可遇 <b>82 种</b> + 道馆礼物 <b>8 只</b> + 开档礼赠<b>皮卡丘</b>，进化图鉴靠培养点亮；伊布三支等节日惊喜！</div></div>
+  <div class="card"><h3>⚔️ 战斗小课堂</h3>
+    <div style="font-size:13px;color:#555;line-height:2">
+    <b>1. 命中率</b>：攻击招式都有命中率（表里 75~100）。威力越大的招往往越容易打空，比如大字爆炎 85、破坏光线没学准头可就白费威力哦。<br>
+    <b>2. 增益 buff</b>：剑舞（攻击×2）、变硬/屏障（防御提升）这类<b>变化招</b>能强化自己，本局战斗内一直有效，战斗结束清零。<br>
+    <b>3. 减益 debuff</b>：叫声（敌攻击↓）、瞪眼/摇尾巴（敌防御↓）、刺耳声（敌防御大↓）用来<b>削弱对方</b>，同样本局有效。<br>
+    <b>4. 状态异常</b>：有些招式打中后会让对手<b>陷入异常</b>——十万伏特可能<b>麻痹</b>、喷射火焰可能<b>烧伤</b>、毒针可能<b>中毒</b>、催眠术直接催眠！<b>变化招</b>（毒粉、唱歌、大蛇瞪眼…）不造成伤害、专门施加异常。野外的宝可梦用异常招比较"温柔"（出招概率减半），道馆馆主可不会客气。<br>
+    <b>5. 套路</b>：先给对面来一發瞪眼再放必杀，或者残血时剑舞强化反败为胜，再或者催眠术后安心强化——这就是训练家的战术！</div>
+    <table style="margin-top:8px"><tr><th>招式例子</th><th>类型</th><th>效果</th></tr>
+    <tr><td>剑舞 / 聚精会神</td><td>增益</td><td>自己攻击↑↑</td></tr>
+    <tr><td>变硬 / 屏障 / 溶化</td><td>增益</td><td>自己防御↑/↑↑</td></tr>
+    <tr><td>叫声</td><td>减益</td><td>对方攻击↓</td></tr>
+    <tr><td>瞪眼 / 摇尾巴 / 刺耳声</td><td>减益</td><td>对方防御↓/↓↓</td></tr></table>
+    <div style="margin-top:10px"><b style="font-size:14px">🤒 异常状态一览</b>
+    <table style="margin-top:6px"><tr><th>状态</th><th>会怎样</th><th>怎么来的</th></tr>
+    <tr><td><span class="stbadge st-poison">🟣 中毒</span></td><td>每次出手前掉 1/8 体力，撑得越久越疼</td><td>毒针/污泥攻击（打中可能中毒）、毒粉/剧毒（专门下毒）</td></tr>
+    <tr><td><span class="stbadge st-para">⚡ 麻痹</span></td><td>每回合 25% 概率动不了</td><td>十万伏特/打雷/泰山压顶、电磁波/大蛇瞪眼</td></tr>
+    <tr><td><span class="stbadge st-sleep">💤 睡眠</span></td><td>呼呼大睡 1~3 回合，醒来才能动</td><td>催眠术/催眠粉/唱歌/恶魔之吻</td></tr>
+    <tr><td><span class="stbadge st-burn">🔥 烧伤</span></td><td>攻击伤害减半</td><td>喷射火焰/大字爆炎/火焰拳</td></tr>
+    <tr><td><span class="stbadge st-freeze">❄️ 冰冻</span></td><td>完全动不了，每回合 25% 概率解冻</td><td>冰冻光束/暴风雪/冰冻拳</td></tr>
+    <tr><td><span class="stbadge st-confuse">💫 混乱</span></td><td>有概率打到自己</td><td>奇异之光、念力/幻象光线（低概率）</td></tr></table>
+    <div style="font-size:12px;color:#888;margin-top:6px">小提示：火系不怕烧伤、冰系不怕冰冻、地/岩/钢系不会中毒；<b>麻痹+睡眠</b>是捕捉好帮手——对手睡着时丢球命中率更高！</div></div></div>`;
+}
+load();
+</script>
+</body>
+</html>

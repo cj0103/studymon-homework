@@ -1,0 +1,34 @@
+# 数据库文件与备份 —— 孩子的游戏进度/打卡记录，绝不入库
+*.sqlite3
+*.sqlite3.bak*
+*.db
+*.db.bak*
+*.sql.bak*
+
+# 素材（含上游版权数据，仓库不分发；目录结构说明见 assets/README.md）
+assets/artwork/
+assets/audio/
+assets/cries/
+assets/veekun-csv/
+assets/out/
+assets/pokegenetic-audio/
+assets/*.log
+assets/dl*.py
+
+# 部署脚本与运维记录（含服务器地址/凭据，属本地私有）
+_deploy*
+_ecs*
+NOTES.md
+*.log
+
+# 运行产物
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

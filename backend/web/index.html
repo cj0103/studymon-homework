@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#e5484d">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<script src="/qrcode.min.js"></script>
+<title>StudyMon · 作业冒险</title>
+<style>
+:root { --red:#e3350d; --blue:#3b82f6; --bg:#f5f6fa; }
+* { box-sizing:border-box; margin:0; font-family:"PingFang SC","Microsoft YaHei",sans-serif; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); max-width:520px; margin:0 auto; padding-bottom:70px; }
+header { background:var(--red); color:#fff; padding:14px 16px; font-size:19px; font-weight:700; position:sticky; top:0; z-index:5; display:flex; justify-content:space-between; align-items:center; }
+header small { font-weight:400; opacity:.85; font-size:13px; }
+.card { background:#fff; border-radius:14px; margin:12px; padding:14px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+button { border:0; border-radius:10px; padding:11px 16px; font-size:16px; cursor:pointer; }
+.btn-p { background:var(--red); color:#fff; width:100%; }
+.btn-b { background:var(--blue); color:#fff; }
+.btn-g { background:#eef0f4; }
+input { width:100%; padding:11px; border:1px solid #ddd; border-radius:10px; font-size:16px; margin:6px 0; }
+.tile { display:inline-block; border:2px solid #ddd; border-radius:12px; padding:10px 14px; margin:5px; font-size:16px; background:#fff; }
+.tile.on { border-color:var(--red); background:#fff1ed; }
+.lv { color:var(--blue); font-weight:700; }
+.bar { height:8px; background:#e5e7eb; border-radius:4px; overflow:hidden; margin-top:4px; }
+.bar i { display:block; height:100%; background:var(--blue); }
+nav { position:fixed; bottom:0; left:0; right:0; max-width:520px; margin:0 auto; display:flex; background:#fff; border-top:1px solid #eee; }
+nav button { flex:1; padding:12px 0; background:none; font-size:14px; color:#666; }
+nav button.on { color:var(--red); font-weight:700; }
+.tag { font-size:12px; padding:2px 8px; border-radius:9px; background:#eef; color:#35c; }
+.stbadge { font-size:12px; padding:2px 8px; border-radius:9px; margin-left:4px; color:#fff; vertical-align:1px; }
+.st-poison { background:#a855f7; } .st-para { background:#f59e0b; } .st-sleep { background:#6b7280; }
+.st-burn { background:#f97316; } .st-freeze { background:#38bdf8; } .st-confuse { background:#ec4899; }
+.warn { color:#b45309; font-size:13px; }
+#toast { position:fixed; top:64px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); color:#fff; padding:8px 18px; border-radius:20px; font-size:14px; display:none; z-index:99; }
+</style>
+</head>
+<body>
+<header><span id="h-title">StudyMon · 作业冒险</span><small id="h-sub"></small></header>
+<div id="app"></div>
+<nav id="nav" style="display:none"></nav>
+<div id="toast"></div>
+<script>
+const S = { token: localStorage.getItem("pkm_token")||"", role: "kid",
+            tasks:[], today:null, sel:new Set(), view:"home" };
+const $ = s => document.querySelector(s);
+const AIL_CN = { poison:"中毒", para:"麻痹", sleep:"睡眠", burn:"烧伤", freeze:"冰冻", confuse:"混乱", tri:"异常" };
+const AIL_ICON = { poison:"🟣", para:"⚡", sleep:"💤", burn:"🔥", freeze:"❄️", confuse:"💫", tri:"❓" };
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(m, dur){ const t=$("#toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none", dur||2200); }
+async function api(path, opt={}) {
+  opt.headers = Object.assign({"Content-Type":"application/json"}, opt.headers||{});
+  if (S.token) opt.headers["Authorization"] = "Bearer "+S.token;
+  if (opt.body && typeof opt.body !== "string") opt.body = JSON.stringify(opt.body);
+  const r = await fetch("/api"+path, opt);
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) { toast(j.detail||"请求失败"); throw new Error(j.detail); }
+  return j;
+}
+function setToken(t){ S.token=t; localStorage.setItem("pkm_token",t); }
+
+/* ---------- 桌面快捷链接（带密钥完整链接 + 二维码 + 复制） ---------- */
+function entryModal(){
+  const dev = localStorage.getItem("pkm_kid") || "";
+  if(!dev) return toast("本设备没有登录凭据，请联系家长重新扫码");
+  const url = location.origin + "/?k=" + dev;
+  let m = document.getElementById("eem");
+  if(!m){ m = document.createElement("div"); m.id="eem";
+    m.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;display:flex;align-items:center;justify-content:center";
+    m.onclick = e=>{ if(e.target===m) m.remove(); };
+    document.body.appendChild(m); }
+  m.innerHTML = `<div style="background:#fff;border-radius:16px;padding:20px 22px;text-align:center;max-width:88%">
+    <b>📌 我的桌面快捷链接</b>
+    <div id="ee_qr" style="margin:10px auto 8px"></div>
+    <div style="font-size:12px;color:#555;word-break:break-all;background:#f8f8f8;border-radius:8px;padding:8px">${esc(url)}</div>
+    <button class="btn-p" style="margin-top:10px;width:100%" onclick="copyEntry('${esc(url)}')">📋 复制完整链接</button>
+    <div style="font-size:12px;color:#888;margin-top:8px;line-height:1.8">
+      用法①：浏览器菜单 →「添加到主屏幕」，以后点图标直进<br>
+      用法②：把链接存为书签或发到别的设备，打开即登录<br>
+      用法③：其他设备扫上面的二维码</div></div>`;
+  const qr = qrcode(0,"M"); qr.addData(url); qr.make();
+  const box = m.querySelector("#ee_qr");
+  box.innerHTML = qr.createSvgTag({cellSize:4, margin:2, scalable:true});
+  box.querySelector("svg").style.width = "210px";
+}
+function copyEntry(url){
+  const done = ()=>toast("已复制！去浏览器菜单「添加到主屏幕」或存书签");
+  if(navigator.clipboard && window.isSecureContext !== false){
+    navigator.clipboard.writeText(url).then(done, ()=>fallbackCopy(url,done));
+  } else fallbackCopy(url,done);
+}
+function fallbackCopy(url, done){
+  // http 非安全环境下 navigator.clipboard 不可用 → 隐藏 textarea + execCommand 兜底
+  const ta = document.createElement("textarea");
+  ta.value = url; ta.style.cssText="position:fixed;left:-9999px";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done(); }catch(e){ toast("复制失败，请长按上方链接手动复制"); }
+  document.body.removeChild(ta);
+}
+
+/* ---------- 首页 ---------- */
+async function home(){
+  const [tasks, today] = await Promise.all([api("/child/tasks"), api("/child/today")]);
+  S.tasks=tasks; S.today=today; S.sel.clear();
+  const r = today.record;
+  const sealCard = (today.sealed && today.sealed.length) ? `
+  <div class="card" style="background:linear-gradient(135deg,#faf5ff,#f3e8ff)">
+    <h3>🔮 封印中的伙伴（${today.sealed.length} 只）</h3>
+    ${today.sealed.map(s=>`<div style="display:flex;align-items:center;margin:6px 0">
+      <img src="/static/artwork/thumb/${s.pokedex_no}.png" width="40" style="filter:grayscale(1);opacity:.75;margin-right:8px" onerror="this.style.display='none'">
+      <div style="flex:1"><b style="color:#7c3aed">${esc(s.name)}</b> 等待解封（解锁后 Lv${s.unseal_level}）
+      <div class="bar" style="margin-top:3px"><i style="width:${Math.min(100, 100*(s.seal_progress||0)/(today.seal_need||7))}%"></i></div>
+      <span style="font-size:12px;color:#888">封印进度 ${s.seal_progress||0}/${today.seal_need||7} 天 · ${esc(s.intro||"")}</span></div></div>`).join("")}
+    <div style="margin-top:8px;background:#fff;border-radius:10px;padding:8px 10px;font-size:13px">
+      🔮 每只伙伴从<b>获得那天</b>起，连续打卡获批满 ${today.seal_need||7} 天自动激活，<br>
+      <span style="font-size:12px;color:#888">激活时达到赠礼道馆的推荐等级；中断则这只重新数（不影响 🔥 大联击）</span></div></div>` : "";
+  $("#app").innerHTML = `
+  <div class="card"><span style="${today.quick_open?"":"filter:grayscale(1);opacity:.55"}">⚡</span> 今日快手奖励：<b>${today.quick_open?(today.fast_deadline+" 前打卡经验 +20%"):(today.study_day?"今日已过 "+today.fast_deadline:"双休日不参与快手奖励")}</b></div>
+  <div class="card">🔥 连续打卡 ${today.streak} 天${today.streak>=6?"（明天有连击大奖！）":""}
+    ${today.carry_pending?`<br><span class="warn">📦 有 ${today.carry_pending} 经验明天发放</span>`:""}</div>
+  ${!r ? `<div class="card"><h3>今天完成了什么？勾一勾！</h3>
+      ${tasks.map(t=>`<span class="tile" data-id="${t.id}" data-name="${esc(t.task_name)}" onclick="tgl(this)">${esc(t.task_name)}</span>`).join("")}
+      <br><button class="btn-p" style="margin-top:10px" onclick="submitCK()">提交给家长审核（基础${today.daily_base}经验${today.quick_open?"×1.2":""}）</button></div>`
+  : r.status===1 ? `<div class="card">✅ 已提交 ${(r.items||[]).map(i=>esc(i.name)).join("、")}<br><span class="warn">⏳ 等待家长审核中，审核通过就发经验啦…</span>
+      <br><button class="btn-g" style="margin-top:8px" onclick="withdrawCK()">撤回</button></div>`
+  : `<div class="card">${r.status===4?"❌ 被驳回："+esc(r.reject_reason||""):"🎉 今日经验 <b class='lv'>+"+r.exp_final+"</b>"+(r.penalty?`（-${r.penalty}: ${esc(r.penalty_reason||"")})`:"")+(r.quick_exp?`（含快手+${r.quick_exp}）`:"")+(r.streak_bonus?`（含连击+${r.streak_bonus}）`:"")+(r.carry_to?`，${r.carry_to}顺延明天`:"")}</div>`+evoCard(r.evolved_json)}`
+  + sealCard;
+}
+function tgl(el){ const id=el.dataset.id; if(S.sel.has(id)){S.sel.delete(id);el.classList.remove("on");}else{S.sel.add(id);el.classList.add("on");} }
+async function submitCK(){
+  if(!S.sel.size) return toast("至少勾选一项");
+  const items=[...S.sel].map(id=>{const t=S.tasks.find(t=>t.id==id);return{id:+id,name:t.task_name};});
+  await api("/child/checkin",{method:"POST",body:{items}}); toast("已提交，等待家长审核"); home();
+}
+async function withdrawCK(){ await api("/child/checkin",{method:"DELETE"}); home(); }
+function evoCard(j){
+  if(!j) return "";
+  let arr; try{ arr = JSON.parse(j); }catch(e){ return ""; }
+  if(!arr || !arr.length) return "";
+  const names = arr.map(esc).join("、");
+  return `<div class="card" style="background:linear-gradient(135deg,#fef9c3,#fde68a);border:2px solid #f59e0b;text-align:center">
+    <div style="font-size:26px">🎊✨</div>
+    <div style="font-weight:800;font-size:18px;color:#b45309;margin:4px 0">你的宝可梦进化了！</div>
+    <div style="font-size:15px;color:#92400e">👉 ${names}</div>
+    <div style="font-size:12px;color:#a16207;margin-top:4px">快去「我的宝可梦」看看新形态和新招式吧</div></div>`;
+}
+
+/* ---------- 宝可梦列表 ---------- */
+async function poke(){
+  const [rows, dex] = await Promise.all([api("/child/pokemon"), api("/child/pokedex")]);
+  S.myteam = rows.filter(p=>p.is_in_team).sort((a,b)=>a.slot-b.slot).map(p=>p.id);
+  S.pkm = {}; rows.forEach(p=>S.pkm[p.id]=p);
+  const seen = dex.filter(d=>d.owned);
+  const TYPED = {hp:"#22c55e",atk:"#ef4444",def:"#3b82f6",spd:"#f59e0b"};
+  $("#app").innerHTML = `<div class="card"><h3>我的宝可梦（出战 ${S.myteam.length}/3）</h3>
+    <small style="color:#888">👆 点宝可梦卡片可查看详情、配置技能</small>
+    ${rows.map(p=>`<div class="pkcard" onclick="pokeDetail(${p.id})" style="border-bottom:1px solid #f0f0f0;padding:10px 0">
+      <img src="/static/artwork/official/${p.pokedex_no}.png" width="72" style="float:left;margin-right:10px;${p.sealed?"filter:grayscale(1);opacity:.7":""}" onerror="this.style.display='none'">
+      <b>${esc(p.name)}</b> <span class="lv">Lv${p.level}</span> ${p.sealed?`<span class="tag" style="background:#7c3aed">🔒 封印中</span>`:p.is_in_team?`<span class="tag">出战${p.slot+1}</span>`:""}
+      <span style="float:right;color:#bbb">›</span>
+      <br>经验 ${p.total_exp}（距下一级 ${p.exp_to_next}）
+      <div class="bar"><i style="width:${Math.min(100, 100 - p.exp_to_next/10)}%"></i></div>
+      <div style="clear:both;margin-top:6px">
+        ${Object.entries(p.stats).map(([k,v])=>`<span style="font-size:12px;margin-right:8px;color:${TYPED[k]}">${p.stats_names[k]} <b>${v}</b></span>`).join("")}
+        <span style="font-size:12px;color:#888;margin-left:4px">⚔️ ${p.move_details.length}个上场技能</span>
+      </div>
+      </div>`).join("")}</div>
+    <div class="card"><h3>图鉴 ${seen.length}/151（点亮=拥有过，进化后前身也保留）</h3><div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px">
+      ${dex.map(d=>`<div style="text-align:center;font-size:11px;color:${d.owned?"#333":"#bbb"}">
+        ${d.owned
+          ? `<img src="/static/artwork/gen1-red-blue/${d.pokedex_no}.png" width="36" onerror="this.style.opacity=.15"><div>${esc(d.name)}</div>`
+          : `<div style="width:36px;height:36px;margin:0 auto;display:flex;align-items:center;justify-content:center;background:#eee;border-radius:8px;color:#bbb;font-weight:bold">?</div><div>???</div>`}</div>`).join("")}</div></div>`;
+}
+async function joinTeam(id){
+  if(S.myteam.length>=3) return toast("队伍已满3只，先撤下一只再换");
+  S.myteam.push(id); await api("/child/team",{method:"POST",body:{team_ids:S.myteam}});
+  toast("已上阵！"); pokeDetail(id);
+}
+async function leaveTeam(id){
+  S.myteam = S.myteam.filter(t=>t!=id);
+  await api("/child/team",{method:"POST",body:{team_ids:S.myteam}});
+  toast("已撤下"); pokeDetail(id);
+}
+
+/* ---------- 宝可梦详情 ---------- */
+async function pokeDetail(id, keepSel){
+  let p;
+  try{ p = await api("/child/pokemon/"+id); }
+  catch(e){ return poke(); }
+  S.detail = p;
+  if(!keepSel || !S.detailSel) S.detailSel = new Set(p.moves||[]);
+  const TYPED = {hp:"#22c55e",atk:"#ef4444",def:"#3b82f6",spd:"#f59e0b"};
+  const pr = p.profile||{};
+  const tb = s => `<span style="display:inline-block;background:#eef;border-radius:6px;padding:1px 8px;font-size:12px;margin-right:4px">${esc(s)}</span>`;
+  $("#app").innerHTML = `
+    <button class="btn-g" style="margin-bottom:8px" onclick="poke()">‹ 返回列表</button>
+    <div class="card" style="text-align:center">
+      <img src="/static/artwork/official/${p.pokedex_no}.png" width="130" onerror="this.style.display='none'">
+      <h2 style="margin:4px 0">${esc(p.name)} <span class="lv">Lv${p.level}</span></h2>
+      <div style="font-size:13px;color:#888">${esc(pr.genus||"")}</div>
+      <div style="margin-top:6px">${tb(p.type1)}${p.type2?tb(p.type2):""}
+        ${pr.height!=null?`<span style="font-size:12px;color:#888;margin-left:6px">身高 ${pr.height}m · 体重 ${pr.weight}kg</span>`:""}
+      </div>
+    </div>
+    <div class="card"><h3>📖 图鉴介绍</h3>
+      <p style="font-size:14px;line-height:1.9;color:#444">${esc(pr.intro||"暂无介绍")}</p></div>
+    ${p.evolution?`<div class="card" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff);border:1px solid #c7d2fe">
+      <h3>🌟 进化之路</h3>
+      <div style="display:flex;align-items:center;gap:10px;font-size:15px">
+        <img src="/static/artwork/official/${p.evolution.to_no}.png" width="52" onerror="this.style.display='none'">
+        <div><b style="color:#4338ca">${esc(p.evolution.name)}</b>
+          <div style="font-size:12px;color:#6366f1">升到 <b>Lv${p.evolution.min_level}</b> 自动进化</div></div>
+      </div>
+      ${p.level>=p.evolution.min_level?"":`<div style="margin-top:6px;font-size:12px;color:#818cf8">再升 ${p.evolution.min_level-p.level} 级就能进化啦，加油打卡！</div>`}
+    </div>`:""}
+    <div class="card"><h3>📊 能力值</h3>
+      ${Object.entries(p.stats).map(([k,v])=>`
+        <div style="display:flex;align-items:center;margin:6px 0">
+          <span style="width:44px;color:${TYPED[k]};font-size:13px">${p.stats_names[k]}</span>
+          <span style="width:36px;font-weight:700;color:${TYPED[k]}">${v}</span>
+          <div style="flex:1;height:8px;background:#f0f0f0;border-radius:4px"><i style="display:block;height:100%;width:${Math.min(100,v/1.8)}%;background:${TYPED[k]};border-radius:4px"></i></div>
+        </div>`).join("")}
+      <div style="font-size:12px;color:#888;margin-top:6px">经验 ${p.total_exp}（距下一级 ${p.exp_to_next}）</div></div>
+    ${p.sealed?`<div class="card" style="background:linear-gradient(135deg,#faf5ff,#f3e8ff);text-align:center">
+      <div style="font-size:24px">🔮</div>
+      <b style="color:#7c3aed;font-size:15px">这只宝可梦还处于封印状态</b>
+      <div style="font-size:13px;color:#6b21a8;margin-top:4px">连续打卡获批满 ${p.seal_need||7} 天就会自动激活，<br>激活时达到赠礼道馆的推荐等级，到级招式全部学会！</div></div>`
+      :`<div class="card"><h3>⚔️ 配置上场技能（选 ${S.detailSel.size}/4）</h3>
+      <small style="color:#888">点技能即可选为上场／取消：<b>最多带 4 个，最少留 1 个</b>（战斗中至少要有一招可用）。想只带 2 个，把其他的逐个点掉即可。升级会自动学会更多，永不遗忘。</small>
+      <div style="margin-top:8px">${(p.known_details||[]).map(m=>{
+          const on=S.detailSel.has(m.id);
+          return `<div onclick="tglMove(${m.id})" style="display:flex;align-items:center;justify-content:space-between;border:2px solid ${on?"#e5484d":"#eee"};background:${on?"#fff2f2":"#fafafa"};border-radius:10px;padding:9px 12px;margin:6px 0;cursor:pointer">
+            <span><b>${esc(m.skill_name)}</b> <small style="color:#888">${moveSub(m)}</small></span>
+            <span style="color:${on?"#e5484d":"#bbb"};font-weight:700">${on?"✓ 上场":"选择"}</span></div>`;}).join("")
+        ||"<small style='color:#999'>暂无技能</small>"}</div>
+      <button class="btn-p" style="width:100%;margin-top:10px" onclick="saveMoves(${p.id})">💾 保存技能配置</button></div>`}
+    ${p.upcoming&&p.upcoming.length&&!p.sealed?`<div class="card"><h3>🔒 未来可学</h3>
+      ${p.upcoming.map(u=>`<div style="font-size:13px;color:#888;padding:3px 0">Lv${u.level} 解锁 <b style="color:#555">${esc(u.skill.skill_name)}</b>（${moveSub(u.skill)}）</div>`).join("")}</div>`:""}
+    ${p.sealed?"":`<div class="card">
+      ${p.is_in_team?`<button class="btn-g" style="width:100%" onclick="leaveTeam(${p.id})">⬇ 退出出战队伍</button>`
+        :`<button class="btn-b" style="width:100%" onclick="joinTeam(${p.id})">⬆ 上阵出战</button>`}
+    </div>`}`;
+}
+/* 技能副文本：攻击招显示 属性·威力·命中（带附加异常补彩色标签）；变化招显示 效果·对象·档位 */
+function ailTag(m){
+  if(!m.ailment) return "";
+  const nm = AIL_CN[m.ailment]||m.ailment;
+  const pct = m.ailment_chance<100 ? " "+m.ailment_chance+"%" : "";
+  const col = {poison:"#a855f7",para:"#f59e0b",sleep:"#6b7280",burn:"#f97316",freeze:"#38bdf8",confuse:"#ec4899",tri:"#8b5cf6"}[m.ailment]||"#888";
+  return ` <span style="color:${col};font-weight:600">${AIL_ICON[m.ailment]||""} ${nm}${pct}</span>`;
+}
+function moveSub(m){
+  if(m.power>0) return esc(m.skill_type)+"·威力"+m.power+"·命中"+(m.accuracy||100)+"%"+ailTag(m);
+  const v = m.effect_value, et = m.effect_type||"";
+  if(!et) return "变化招式";
+  if(et.startsWith("status_")) return `<span style="color:#dc2626">使对方${AIL_CN[m.ailment]||""}</span>`+(m.accuracy?"·命中"+m.accuracy+"%":"");
+  if(et==="heal") return "<span style='color:#16a34a'>回复自身HP "+Math.round((v||0.5)*100)+"%</span>";
+  if(et==="drain") return "<span style='color:#16a34a'>吸血·伤害并回复</span>";
+  if(et==="ohko") return "<span style='color:#dc2626'>强力招·命中后对方只剩1点体力</span>";
+  const up = et.endsWith("_up"), stat = et.startsWith("atk")?"攻击":"防御";
+  const strong = up ? v>=2 : v<=0.5;   // 1.5→单档 2→双档；0.7→单档 0.5→双档
+  const arrow = (up?"↑":"↓").repeat(strong?2:1);
+  const hit = m.accuracy? "·命中"+m.accuracy+"%" : "";
+  return (up?"<span style='color:#16a34a'>增益·自身"+stat+arrow+"</span>"
+             :"<span style='color:#dc2626'>减益·对方"+stat+arrow+"</span>")+"·整场有效"+hit;
+}
+function tglMove(mid){
+  const cur = S.detailSel;
+  if(cur.has(mid)) cur.delete(mid);
+  else { if(cur.size>=4) return toast("最多带4个技能，先取消一个再选"); cur.add(mid); }
+  if(cur.size===0){ cur.add(mid); return toast("至少保留1个上场技能（战斗中至少要有一招）"); }
+  // keepSel=true：本地切换后直接重绘，不要从服务器重置选择状态
+  pokeDetail(S.detail.id, true);
+}
+async function saveMoves(pid){
+  await api(`/child/pokemon/${pid}/moves`,{method:"POST",body:{moves:[...S.detailSel]}});
+  toast("技能已保存！"); pokeDetail(pid);
+}
+
+/* ---------- 战斗 ---------- */
+let BS=null;
+async function battle(){
+  const av = await api("/child/battle/availability");
+  if(!av.can_battle){ $("#app").innerHTML=`<div class="card">⚔️ 道馆挑战与野生捕获<b>只在周六周日开放</b>。<br>今天是上学日，先去打卡练级吧！</div>`; return; }
+  const gym = av.next_gym;
+  $("#app").innerHTML = `<div class="card">🏅 徽章：${av.badges.join(" ")||"暂无"}｜本周捕获次数 ${av.catch_left}</div>
+    ${gym?`<div class="card"><h3>下一场道馆战：${esc(gym.gym_name)}</h3>推荐等级 Lv${gym.recommend_level}｜胜利获得【${esc(gym.badge_name)}】
+      <br><button class="btn-p" style="margin-top:8px" onclick="startGym()">挑战！</button></div>`:`<div class="card">🎉 八馆全部通关！</div>`}
+    <div class="card"><h3>野外相遇</h3>捕获野生宝可梦加入图鉴（本周剩 ${av.catch_left} 次）
+      <br><button class="btn-b" style="margin-top:8px" ${av.catch_left<=0?"disabled":""} onclick="startWild()">去草丛</button></div>
+    <div id="arena"></div>`;
+}
+async function startGym(){ BS = await api("/child/battle/gym",{method:"POST"}); renderArena(); }
+async function startWild(){ BS = await api("/child/battle/wild",{method:"POST"}); renderArena(); }
+function renderArena(log){
+  const f=BS.foe[BS.foe_idx||0]||BS.foe[0];
+  const cur=BS.my.find(m=>m.hp>0)||BS.my[0];
+  const stBadge=(st)=>st?` <span class="stbadge st-${st.ailment}" title="${AIL_CN[st.ailment]||''}">${AIL_ICON[st.ailment]||""}${AIL_CN[st.ailment]||""}</span>`:"";
+  $("#arena").innerHTML = `<div class="card"><h3>战斗！</h3>
+    <div>对方 ${esc(f.name)} Lv${f.level} HP ${f.hp}/${f.stats.hp}${stBadge(f.status)}
+      <div class="bar"><i style="width:${100*f.hp/f.stats.hp}%;background:#e3350d"></i></div></div>
+    <hr style="margin:8px 0;border:0;border-top:1px dashed #eee">
+    ${BS.my.map((m)=>`<div style="${m.hp<=0?'opacity:.4;text-decoration:line-through':''}${m===cur?';font-weight:700':''}">${esc(m.name)} Lv${m.level} HP ${m.hp}/${m.stats.hp}${stBadge(m.status)}${m===cur?" ⚡":""}
+      <div class="bar"><i style="width:${100*m.hp/m.stats.hp}%"></i></div></div>`).join("")}
+    <div style="margin-top:8px">${(cur.moves||[]).map(m=>{const pp=cur.pp?cur.pp[m.id]:null, out=pp===0;
+      return `<button class="btn-g" style="margin:3px${out?";opacity:.35":""}" ${out?"disabled":""} onclick="useSkill(${m.id})">${esc(m.skill_name)}${m.priority>0?'<small style="color:#c9a227">⚡先制</small>':""}<small style="color:#888">${m.power>0?" 威力"+m.power+"·命中"+(m.accuracy||100)+"%":" 变化"}${m.ailment&&m.ailment_chance? "·"+(AIL_CN[m.ailment]||m.ailment)+(m.ailment_chance<100? m.ailment_chance+"%":""):""}${pp!=null? "·PP"+"●".repeat(Math.min(pp,8))+"○".repeat(Math.max(0,Math.min(8,(m.max_pp||8)-pp)))+(pp===0?"(用完了)":""):""}</small></button>`}).join("")}
+      ${BS.kindWild?`<button class="btn-b" style="margin:3px" onclick="tryCatch()">🔴 丢精灵球</button>`:""}
+      <button class="btn-g" style="margin:3px" onclick="flee()">逃跑</button></div>
+    <div id="blog" style="font-size:14px;color:#555;margin-top:8px;white-space:pre-wrap">${(log||[]).join("\n")}</div></div>`;
+}
+async function useSkill(id){ const r=await api("/child/battle/act",{method:"POST",body:{action:"attack",skill_id:id}}); afterAct(r); }
+async function tryCatch(){ const r=await api("/child/battle/act",{method:"POST",body:{action:"catch"}}); afterAct(r); }
+async function flee(){ await api("/child/battle/act",{method:"POST",body:{action:"run"}}); toast("成功逃脱"); battle(); }
+function afterAct(r){
+  if(r.result==="win"){
+    if(r.gift){
+      toast(`🎁 获得道馆礼物：${r.gift.name}（封印中）！连续打卡7天即可激活！`, 4200);
+    } else {
+      toast("🎉 胜利！"+(r.badge?"获得徽章【"+r.badge+"】":""));
+    }
+    BS=null; battle(); return;
+  }
+  if(r.result==="lose"){ toast("被打倒了…回去练级吧"); BS=null; battle(); return; }
+  if(r.result==="catch"){ toast("🎊 捕获成功！"); BS=null; battle(); return; }
+  BS.my=r.my; BS.foe=r.foe; renderArena(r.messages);
+}
+
+/* ---------- 导航 ---------- */
+const VIEWS = { home, poke, battle };
+async function go(v){
+  S.view=v;
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  try{ await VIEWS[v](); }
+  catch(e){   // 真·网络/渲染异常兜底：不留白，给重试入口（措辞中性，避免孩子误以为出错）
+    $("#app").innerHTML = `<div class="card">😴 页面没有打开，网络可能不稳定<br><br>
+      <button class="btn-p" onclick="go('${v}')">点击重试</button></div>`;
+  }
+}
+
+/* ---------- 启动：?k= 令牌 → 本地缓存令牌 → 绑定页 ---------- */
+async function enter(name){
+  $("#h-sub").innerHTML = esc(name)+' <span onclick="entryModal()" style="cursor:pointer;opacity:.85;margin-left:6px" title="生成桌面快捷链接">🔗</span>';
+  const n=$("#nav"); n.style.display="flex";
+  n.innerHTML = [["home","🏠 打卡"],["poke","📔 宝可梦"],["battle","⚔️ 冒险"]]
+    .map(([k,l])=>`<button data-v="${k}" onclick="go('${k}')">${l}</button>`).join("")
+    + `<button onclick="location.href='/guide'">🗺️ 指南</button>`;
+  go("home");
+}
+function renderBind(msg){
+  $("#nav").style.display="none";
+  $("#app").innerHTML = `<div class="card"><h3>🎫 需要设备链接</h3>
+    <p style="font-size:14px;color:#666;line-height:1.8">${msg||"请让家长在管理页签发「孩子平板」链接，<br>或用该链接打开本页面。"}</p>
+    <input id="k" placeholder="粘贴 kid_ 开头的设备令牌" style="font-size:14px">
+    <button class="btn-p" onclick="bindK()">绑定</button></div>`;
+}
+async function bindK(){
+  const k = $("#k").value.trim();
+  if(!k) return;
+  try{ const j = await api("/resolve/"+encodeURIComponent(k));
+    if(j.role!=="kid") return toast("这是家长链接");
+    setToken(j.token); enter(j.name);
+  }catch(e){}
+}
+(async ()=>{
+  const q = new URLSearchParams(location.search);
+  let k = q.get("k");
+  if (k) { history.replaceState(null,"",location.pathname); localStorage.setItem("pkm_kid",k); }
+  else k = localStorage.getItem("pkm_kid");
+  if (!k) return renderBind();
+  try{
+    const j = await api("/resolve/"+encodeURIComponent(k));
+    if (j.role!=="kid") return renderBind("这是家长链接，请在家长设备使用");
+    setToken(j.token); enter(j.name);
+  }catch(e){ renderBind("设备链接已失效，请联系家长重新签发。"); }
+})();
+</script>
+</body>
+</html>

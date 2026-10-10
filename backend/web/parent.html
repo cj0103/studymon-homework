@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#1f2937">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icon-192.png">
+<script src="/qrcode.min.js"></script>
+<title>StudyMon · 家长管理</title>
+<style>
+:root { --red:#e3350d; --blue:#3b82f6; --bg:#f5f6fa; }
+* { box-sizing:border-box; margin:0; font-family:"PingFang SC","Microsoft YaHei",sans-serif; -webkit-tap-highlight-color:transparent; }
+body { background:var(--bg); max-width:560px; margin:0 auto; padding-bottom:70px; }
+header { background:#1f2937; color:#fff; padding:14px 16px; font-size:19px; font-weight:700; position:sticky; top:0; z-index:5; display:flex; justify-content:space-between; align-items:center; }
+header small { font-weight:400; opacity:.85; font-size:13px; }
+.card { background:#fff; border-radius:14px; margin:12px; padding:14px; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+button { border:0; border-radius:10px; padding:11px 16px; font-size:16px; cursor:pointer; }
+.btn-p { background:var(--red); color:#fff; width:100%; }
+.btn-b { background:var(--blue); color:#fff; }
+.btn-g { background:#eef0f4; }
+input { width:100%; padding:11px; border:1px solid #ddd; border-radius:10px; font-size:16px; margin:6px 0; }
+.lv { color:var(--blue); font-weight:700; }
+nav { position:fixed; bottom:0; left:0; right:0; max-width:560px; margin:0 auto; display:flex; background:#fff; border-top:1px solid #eee; }
+nav button { flex:1; padding:12px 0; background:none; font-size:14px; color:#666; }
+nav button.on { color:var(--red); font-weight:700; }
+.tag { font-size:12px; padding:2px 8px; border-radius:9px; background:#eef; color:#35c; }
+.warn { color:#b45309; font-size:13px; }
+.urlbox { background:#f3f4f6; border-radius:8px; padding:8px; font-size:12px; word-break:break-all; margin:6px 0; user-select:all; }
+#toast { position:fixed; top:64px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); color:#fff; padding:8px 18px; border-radius:20px; font-size:14px; display:none; z-index:99; }
+</style>
+</head>
+<body>
+<header><span>🧑 家长管理</span><small id="h-sub"></small></header>
+<div id="app"></div>
+<nav id="nav" style="display:none"></nav>
+<div id="toast"></div>
+<script>
+const S = { token:"", view:"today" };
+const $ = s => document.querySelector(s);
+const esc = s => String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function toast(m){ const t=$("#toast"); t.textContent=m; t.style.display="block"; setTimeout(()=>t.style.display="none",2200); }
+async function api(path, opt={}) {
+  opt.headers = Object.assign({"Content-Type":"application/json"}, opt.headers||{});
+  if (S.token) opt.headers["Authorization"] = "Bearer "+S.token;
+  if (opt.body && typeof opt.body !== "string") opt.body = JSON.stringify(opt.body);
+  const r = await fetch("/api"+path, opt);
+  const j = await r.json().catch(()=>({}));
+  if (!r.ok) { toast(j.detail||"请求失败"); throw new Error(j.detail); }
+  return j;
+}
+
+/* ---------- 解锁 ---------- */
+async function unlock(pin){
+  const k = localStorage.getItem("pkm_par_k");
+  if(!k) return false;
+  try{
+    const j = await api("/parent/unlock",{method:"POST",body:{token:k,pin}});
+    S.token = j.token; S.students = j.students;
+    localStorage.setItem("pkm_par_jw", j.token);
+    enter(); return true;
+  }catch(e){ return false; }
+}
+function renderUnlockLock(hint){
+  $("#nav").style.display="none";
+  $("#app").innerHTML = `<div class="card"><h3>🔒 输入家长密码</h3>
+    <p style="font-size:13px;color:#666">本设备已绑定（尾号 ${esc(hint||"")}），输入密码解锁</p>
+    <input id="pin" type="text" autocomplete="off" placeholder="家长密码" style="font-size:20px;text-align:center;letter-spacing:6px">
+    <button class="btn-p" onclick="doUnlock()">解锁</button>
+    <p style="font-size:12px;color:#999;margin-top:8px">解锁后 7 天内本设备免输</p></div>`;
+}
+async function doUnlock(){ if(await unlock($("#pin").value)) toast("已解锁"); else toast("密码错误"); }
+function renderNoLink(){
+  $("#nav").style.display="none";
+  $("#app").innerHTML = `<div class="card"><h3>🎫 需要家长设备链接</h3>
+    <p style="font-size:14px;color:#666;line-height:1.8">请用家长在管理页「设备」标签签发的专用链接打开，<br>或在此粘贴 par_ 令牌：</p>
+    <input id="k" placeholder="par_ 开头的令牌">
+    <button class="btn-p" onclick="bindK()">绑定</button></div>`;
+}
+function bindK(){
+  const k=$("#k").value.trim(); if(!k.startsWith("par_")) return toast("令牌格式不对");
+  localStorage.setItem("pkm_par_k",k); boot();
+}
+
+/* ---------- 导航 ---------- */
+const NAVS=[["today","📋审批"],["tasks","🧾任务"],["members","👪成员"],["devices","📱设备"],["team","ℹ️说明"]];
+function enter(){
+  $("#h-sub").textContent=(S.students||[]).map(s=>s.name).join("、")||"家长";
+  const n=$("#nav"); n.style.display="flex";
+  n.innerHTML = NAVS.map(([k,l])=>`<button data-v="${k}" onclick="go('${k}')">${l}</button>`).join("")
+    + `<button onclick="lockNow()">锁屏</button>`;
+  go("today");
+}
+function lockNow(){ localStorage.removeItem("pkm_par_jw"); location.reload(); }
+function go(v){ S.view=v;
+  document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.v===v));
+  PR[v]().catch(e=>{ $("#app").innerHTML = `<div class="card">😵 页面加载失败<br><br>
+    <button class="btn-p" onclick="go('${v}')">点击重试</button></div>`; }); }
+const PR={};
+
+/* ---------- 审批 ---------- */
+PR.today = async ()=>{
+  const [pend, hist] = await Promise.all([api("/parent/pending"), api("/parent/history?limit=14")]);
+  $("#app").innerHTML = (pend.length?`<div class="card"><h3>⏳ 待确认（${pend.length}）</h3>`:
+    `<div class="card">✅ 暂无待确认打卡</div>`) +
+    pend.map(c=>`<div class="card" id="ck${c.id}"><b>${esc(c.student_name)}</b> ${c.task_date} ${c.quick_win?'<span class="tag">⚡快手</span>':""}<br>
+      ${c.items.map((it,i)=>`<label><input type="checkbox" checked data-ck="${c.id}" data-i="${i}" data-n="${esc(it.name)}"> ${esc(it.name)}</label> `).join("")}
+      <br><button class="btn-p" style="margin:8px 6px 0 0;width:auto" onclick="appr(${c.id},0)">批准</button>
+      <button class="btn-g" style="margin:8px 6px 0 0" onclick="appr(${c.id},10)">批准-10</button>
+      <button class="btn-g" style="margin:8px 6px 0 0" onclick="appr(${c.id},20)">批准-20</button>
+      <button class="btn-g" style="margin:8px 0 0 0" onclick="rej(${c.id})">驳回</button></div>`).join("")
+    + `<div class="card"><h3>最近记录</h3>${hist.map(h=>`<div style="border-bottom:1px solid #f3f3f3;padding:6px 0;font-size:14px">
+      ${h.task_date} ${["","待审","✅"+(h.exp_final)+"经验"+(h.penalty?`(-${h.penalty})`:""),"⚠️"+(h.exp_final)+"经验(-"+h.penalty+")","❌驳回 "+esc(h.reject_reason||"")][h.status]}
+      ${h.carry_to?`<span class="warn">${h.carry_to}顺延</span>`:""} · ${h.items.map(i=>esc(i.name)).join("、")}
+      ${h.status>=2&&h.status!=4?`<button class="btn-g" style="padding:3px 10px;font-size:12px;float:right" onclick="rej(${h.id})">撤销</button>`:""}</div>`).join("")}</div>`;
+};
+async function appr(id,penalty){
+  const boxes=[...document.querySelectorAll(`input[data-ck="${id}"]`)];
+  const kept=boxes.filter(b=>b.checked).map(b=>({id:+b.dataset.i,name:b.dataset.n}));
+  const removed=boxes.filter(b=>!b.checked).length;
+  const reason = penalty? prompt(`扣${penalty}经验的原因（如：没理书包）`)||"" : null;
+  const j = await api("/parent/approve",{method:"POST",body:{checkin_id:id,penalty:penalty||0,adjusted:removed?kept:null,penalty_reason:reason}});
+  const act = j.activated&&j.activated.length ? " 🔮封印激活："+j.activated.map(a=>a.name+"Lv"+a.level).join("、") : "";
+  toast((j.evolved&&j.evolved.length ? "已处理 🎊进化："+j.evolved.join("、") : "已处理")+act); PR.today();
+}
+async function rej(id){ const reason=prompt("驳回原因（孩子会看到）")||""; await api("/parent/reject",{method:"POST",body:{checkin_id:id,reason}}); PR.today(); }
+
+/* ---------- 任务库/配置 ---------- */
+PR.tasks = async ()=>{
+  const [tasks,cfg] = await Promise.all([api("/tasks"), api("/config")]);
+  $("#app").innerHTML = `<div class="card"><h3>🧾 任务菜单（孩子勾选用）</h3>
+    ${tasks.map(t=>`<div style="padding:6px 0;border-bottom:1px solid #f3f3f3">
+      ${t.enabled?"✅":"⛔"} ${esc(t.task_name)} <small>(${t.category==="study"?"学习":"生活"})</small>
+      <button class="btn-g" style="float:right;padding:3px 10px;font-size:12px" onclick="tog(${t.id},${t.enabled?0:1})">${t.enabled?"停用":"启用"}</button></div>`).join("")}
+    <div style="margin-top:8px"><input id="nt" placeholder="新任务名称（如：做家务）">
+    <button class="btn-b" onclick="addTask()">添加</button></div></div>
+  <div class="card"><h3>⚙️ 经验规则</h3>
+    ${[["daily_base_exp","每日定额"],["daily_cap","每日上限"],["fast_deadline","快手截止"],["fast_multiplier","快手系数"],["streak_bonus_days","连击天数"],["streak_bonus_exp","连击奖励"],["exp_split_mode","分配(even/lead)"]]
+      .map(([k,l])=>`<div style="padding:4px 0">${l} <input style="width:100px;display:inline-block;padding:5px" id="cf_${k}" value="${esc(cfg[k])}">
+      <button class="btn-g" style="padding:4px 10px;font-size:12px" onclick="saveCfg('${k}')">存</button></div>`).join("")}</div>`;
+};
+async function tog(id,cur){ await api("/tasks/"+id,{method:"PUT",body:{enabled:!cur}}); PR.tasks(); }
+async function addTask(){ const n=$("#nt").value.trim(); if(!n)return; await api("/tasks",{method:"POST",body:{task_name:n}}); PR.tasks(); }
+async function saveCfg(k){ await api("/config",{method:"PUT",body:{key:k,value:$("#cf_"+k).value}}); toast("已保存"); }
+
+/* ---------- 成员管理 ---------- */
+PR.members = async ()=>{
+  const [m,cfg] = await Promise.all([api("/parent/members"), api("/config")]);
+  $("#app").innerHTML = `
+  <div class="card"><h3>🧒 孩子</h3>
+    ${m.kids.map(k=>`<div style="border-bottom:1px solid #f3f3f3;padding:10px 0">
+      <div style="font-size:15px"><b id="nm_${k.id}">${esc(k.student_name)}</b>
+        <span class="tag">${k.mon_count}只宝可梦</span><span class="tag">已获批打卡 ${k.approved_days} 天</span></div>
+      <div style="margin-top:6px">
+        <input id="name_${k.id}" value="${esc(k.student_name)}" maxlength="12" style="width:46%;display:inline-block" placeholder="昵称">
+        <input id="pin_${k.id}" inputmode="numeric" maxlength="8" style="width:32%;display:inline-block" placeholder="新PIN(选填)">
+        <button class="btn-b" style="padding:8px 12px;font-size:13px" onclick="saveKid(${k.id})">保存</button></div>
+      ${k.kid_token?`<div style="margin-top:6px"><button class="btn-b" style="padding:6px 12px;font-size:13px" onclick="qrModal('学习平板 · ${esc(k.student_name)}','/?k=${esc(k.kid_token)}')">📱 出示学习平板登录码</button>
+        <span style="font-size:12px;color:#888;margin-left:6px">扫码即进，装上App后每天点图标</span></div>`:'<div style="font-size:12px;color:#b45309;margin-top:6px">⚠️ 无有效平板链接，请重新生成</div>'}
+      <button class="btn-g" style="padding:6px 12px;font-size:13px;margin-top:4px" onclick="regenKid(${k.id})">🔄 重新生成平板链接（旧链接立即失效）</button>
+      <div id="rk_${k.id}"></div></div>`).join("")}</div>
+  <div class="card"><h3>🧑 家长账号（尾号 ${esc(m.parent.phone.slice(-4))}）</h3>
+    <input id="opw" type="text" autocomplete="off" placeholder="原密码" style="width:48%;display:inline-block">
+    <input id="npw" type="text" autocomplete="off" placeholder="新密码(≥6位)" style="width:48%;display:inline-block">
+    <button class="btn-b" style="padding:8px 12px;font-size:13px" onclick="savePw()">修改密码</button>
+    <p style="font-size:12px;color:#999;margin-top:6px">此密码同时用于「家长链接」解锁；修改后所有家长设备下次解锁需用新密码</p></div>
+  <div class="card"><h3>⚔️ 战斗开放</h3>
+    <div style="font-size:14px">学习日开放道馆/捕捉：
+      <button class="${cfg.battle_weekday_open==="1"?"btn-b":"btn-g"}" style="padding:6px 14px;font-size:13px" onclick="setBattleOpen(1)">开放</button>
+      <button class="${cfg.battle_weekday_open==="1"?"btn-g":"btn-b"}" style="padding:6px 14px;font-size:13px" onclick="setBattleOpen(0)">仅周末</button>
+    </div>
+    <p style="font-size:12px;color:#999;margin-top:6px">测试期建议保持开放；正式开学节奏后切"仅周末"。无论开关，学习日 21:30 快手加成规则不变</p></div>`;
+};
+async function saveKid(id){
+  const body = {name:$("#name_"+id).value.trim()};
+  const pin = $("#pin_"+id).value.trim();
+  if(pin) body.pin = pin;
+  await api("/parent/child/"+id,{method:"PUT",body});
+  toast("已保存"); PR.members();
+}
+async function regenKid(id){
+  if(!confirm("旧平板链接将立即失效，确定？")) return;
+  const j = await api("/parent/child/"+id+"/regen-token",{method:"POST"});
+  $("#rk_"+id).innerHTML = `<div class="urlbox" style="background:#f0fdf4;margin-top:6px">新链接：${location.origin}${j.url}</div>`;
+}
+async function savePw(){
+  await api("/parent/self",{method:"PUT",body:{old_password:$("#opw").value,password:$("#npw").value}});
+  toast("密码已修改"); $("#opw").value=$("#npw").value="";
+}
+async function setBattleOpen(v){ await api("/config",{method:"PUT",body:{key:"battle_weekday_open",value:String(v)}}); toast(v?"学习日已开放战斗":"战斗恢复仅周末"); PR.members(); }
+
+/* ---------- 设备管理 ---------- */
+PR.devices = async ()=>{
+  let devs=[]; try{ devs = await api("/parent/devices"); }catch(e){}
+  const kids = S.students||[];
+  $("#app").innerHTML = `<div class="card"><h3>📱 设备链接管理</h3>
+    <p style="font-size:13px;color:#666">浏览器读不到 WiFi MAC 地址，用「专属链接」等效绑定设备。<br>链接即身份：请只保存在自己设备上；丢失可改名/吊销/删除。</p>
+    ${devs.map(d=>`<div style="border-bottom:1px solid #f3f3f3;padding:8px 0;font-size:14px">
+      ${d.enabled?"🟢":"⛔"} <input id="lb_${encodeURIComponent(d.token)}" value="${esc(d.label||d.token.slice(0,10))}" maxlength="20" style="width:40%;display:inline-block;padding:5px 8px;font-size:14px;margin:0"> <span class="tag">${d.role==="kid"?"孩子":"家长"}</span>
+      <button class="btn-g" style="float:right;padding:3px 10px;font-size:12px;margin-left:4px" onclick="delDev('${d.token}')">删除</button>
+      <button class="btn-g" style="float:right;padding:3px 10px;font-size:12px" onclick="togDev('${d.token}',${d.enabled?1:0})">${d.enabled?"吊销":"恢复"}</button>
+      <button class="btn-b" style="float:right;padding:3px 10px;font-size:12px;margin-left:4px" onclick="renDev('${d.token}')">改名</button>
+      <button class="btn-p" style="float:right;padding:3px 10px;font-size:12px;margin-left:4px" onclick="qrModal('${esc(d.label||"设备")}','${d.role==="kid"?"/?k=":"/parent/?k="}${esc(d.token)}')">扫码</button>
+      <div class="urlbox">${location.origin}${d.role==="kid"?"/?k=":"/parent/?k="}${esc(d.token)}</div></div>`).join("")}
+    <div style="margin-top:10px">
+      ${kids.map(kd=>`<button class="btn-b" style="margin:4px 4px 4px 0" onclick="issue('kid','学习平板',${kd.id})">＋签发学习平板链接</button>`).join("")}
+      <button class="btn-g" style="margin:4px" onclick="issue('parent','爸爸手机')">＋爸爸手机</button>
+      <button class="btn-g" style="margin:4px" onclick="issue('parent','妈妈手机')">＋妈妈手机</button>
+    </div>
+    <div id="newurl"></div></div>`;
+};
+async function issue(role,label,sid){
+  const j = await api("/parent/device/issue",{method:"POST",body:{role,label,student_id:sid}});
+  $("#newurl").innerHTML = `<div class="card" style="background:#f0fdf4"><b>✅ 新链接已生成，扫码即可进入</b>
+    <div style="text-align:center;padding:8px 0" id="qr_new"></div>
+    <div class="urlbox">${location.origin}${j.url}</div></div>`;
+  drawQR("#qr_new", location.origin + j.url);
+  PR.devices();
+}
+/* ---------- 二维码弹窗（设备免敲链接 + 可复制快捷链接） ---------- */
+function qrModal(label, path){
+  const url = location.origin + path;
+  let m = document.getElementById("qrm");
+  if(!m){ m = document.createElement("div"); m.id="qrm";
+    m.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99;display:flex;align-items:center;justify-content:center";
+    m.onclick = e=>{ if(e.target===m) m.remove(); };
+    document.body.appendChild(m); }
+  m.innerHTML = `<div style="background:#fff;border-radius:16px;padding:20px 24px;text-align:center;max-width:86%">
+    <b>${esc(label)}</b>
+    <div id="qr_box" style="margin:12px auto 6px"></div>
+    <div style="font-size:11px;color:#555;word-break:break-all;background:#f8f8f8;border-radius:8px;padding:6px">${esc(url)}</div>
+    <button class="btn-p" style="margin-top:8px;width:100%" onclick="copyEntry('${esc(url)}')">📋 复制完整链接</button>
+    <div style="font-size:12px;color:#666;margin-top:6px">相机/浏览器扫一扫即可打开<br>目标设备菜单点「添加到主屏幕」，以后点图标直进</div></div>`;
+  drawQR("#qr_box", url);
+}
+function drawQR(sel, url){
+  const qr = qrcode(0, "M"); qr.addData(url); qr.make();
+  document.querySelector(sel).innerHTML = qr.createSvgTag({cellSize:4, margin:2, scalable:true});
+  document.querySelector(sel).querySelector("svg").style.width = "230px";
+}
+function copyEntry(url){
+  const done = ()=>toast("已复制完整链接");
+  if(navigator.clipboard){
+    navigator.clipboard.writeText(url).then(done, ()=>fallbackCopy(url,done));
+  } else fallbackCopy(url,done);
+}
+function fallbackCopy(url, done){
+  const ta = document.createElement("textarea");
+  ta.value = url; ta.style.cssText="position:fixed;left:-9999px";
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); done(); }catch(e){ toast("复制失败，请长按链接手动复制"); }
+  document.body.removeChild(ta);
+}
+async function togDev(t,cur){ await api("/parent/device/"+t,{method:"PUT",body:{enabled:!cur}}); PR.devices(); }
+async function renDev(t){
+  const lb = $("#lb_"+encodeURIComponent(t)).value.trim();
+  if(!lb) return toast("名称不能为空");
+  await api("/parent/device/"+t,{method:"PUT",body:{label:lb}}); toast("已改名");
+}
+async function delDev(t){
+  if(!confirm("永久删除该链接？对应设备将立刻无法访问。")) return;
+  await api("/parent/device/"+t,{method:"DELETE"}); toast("已删除"); PR.devices();
+}
+
+/* ---------- 说明 ---------- */
+PR.team = ()=>{ $("#app").innerHTML = `<div class="card"><h3>ℹ️ 规则速览</h3><div style="font-size:14px;line-height:1.9">
+  📌 经验唯一来源＝打卡获批（战斗不产经验）<br>
+  📌 每日定额（默认230）与勾选数量无关；学习日21:30前获批×1.2<br>
+  📌 每日上限320，超出顺延次日发放<br>
+  📌 连续获批第7天 +50<br>
+  📌 扣减批准-10/-20（没理书包等）；驳回=当天全扣<br>
+  📌 出战最多3只，经验平分（可切lead主力60%）<br>
+  📌 周六日：道馆挑战 + 野生捕获（每周3次）<br>
+  📌 徽章按原版顺序：灰色→蓝色→橙色→彩虹→粉红→金色→深红→绿色</div></div>
+  <div class="card"><h3>🔑 登录方式</h3><div style="font-size:14px;line-height:1.9">
+  孩子平板：收藏管理页签发的 /?k=kid_xxx 链接，打开即进，零登录<br>
+  家长手机：收藏 /parent/?k=par_xxx 链接，输一次密码7天免输<br>
+  兜底：浏览器访问 /parent 手动粘贴 par_ 令牌</div></div>`; };
+
+/* ---------- 启动 ---------- */
+async function boot(){
+  const q = new URLSearchParams(location.search);
+  const k = q.get("k");
+  if (k && k.startsWith("par_")) { localStorage.setItem("pkm_par_k",k); history.replaceState(null,"",location.pathname); }
+  if (!localStorage.getItem("pkm_par_k")) return renderNoLink();
+  const cached = localStorage.getItem("pkm_par_jw");
+  if (cached) { S.token = cached;
+    try{ await api("/parent/pending"); return enter(); }
+    catch(e){ localStorage.removeItem("pkm_par_jw"); }
+  }
+  // 需要 PIN：先 resolve 拿 hint
+  try{
+    const j = await api("/resolve/"+localStorage.getItem("pkm_par_k"));
+    if (j.role!=="parent") return renderNoLink();
+    renderUnlockLock(j.hint);
+  }catch(e){ renderNoLink(); }
+}
+boot();
+</script>
+</body>
+</html>
