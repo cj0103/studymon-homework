@@ -1,0 +1,64 @@
+# 数据库文件与备份 —— 孩子的游戏进度/打卡记录，绝不入库
+*.sqlite3
+*.sqlite3.bak*
+*.db
+*.db.bak*
+*.sql.bak*
+*.sqlite3.bak*
+pkm.sqlite3*
+
+# 素材（含上游版权数据，仓库不分发；目录结构说明见 assets/README.md）
+assets/artwork/
+assets/audio/
+assets/cries/
+assets/veekun-csv/
+assets/out/
+assets/pokegenetic-audio/
+assets/*.log
+assets/dl*.py
+assets/check_moves.py
+assets/build_import.py
+assets/make_thumbs.py
+
+# 部署脚本与运维记录（含服务器地址/凭据，属本地私有）
+_deploy*
+_ecs*
+NOTES.md
+*.log
+
+# 本地私有运维/一次性工具（含凭据或仅本机有意义）
+backend/_deploy*
+backend/_ecs*
+backend/_pull_online_progress.py
+backend/_probe*
+backend/_verify*
+backend/_finish*
+backend/_fix*
+backend/_learn_fix*
+backend/_make_icon.py
+backend/_flavor/
+
+# 工作区杂项
+.workbuddy/
+nul
+*.log
+server.log
+smoke8300.log
+dl.log
+
+# 运行产物
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 工作区杂项（本地草稿/备份残留）
+intro_compare.md
+backend/rebuild_wild.py.bak_v6
+pokemon_homework_game_project.md
