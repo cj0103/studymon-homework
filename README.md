@@ -94,7 +94,12 @@ PKM_DB_ENGINE=sqlite python -m uvicorn app.main:app --port 8300
 
 ## 素材准备（本仓库不含）
 
-应用运行需要宝可梦立绘、战斗精灵、叫声音频与图鉴静态数据，因版权原因**不随仓库分发**。`assets/README.md` 说明了目录约定：所有素材以图鉴编号 `1-151` 为键（如 `artwork/official/25.png` = 皮卡丘），后端把 `assets/` 挂在 `/static` 下按编号拼 URL。对战画面需要正面（`gen1-red-blue/`）与背面（`gen1-red-blue-back/`）两套战斗精灵。自行准备后放入对应目录即可，缺失时前端会自动隐藏图片占位、不影响玩法。静态数据表由 `build_*.py` / `rebuild_*.py` 系列脚本从素材生成到 `assets/out/`。
+应用运行需要宝可梦立绘与战斗精灵、上游数据表与派生静态数据，因版权原因**不随仓库分发**。完整的自备清单、上游数据源、构建顺序与验证方法见 **[ASSETS_GUIDE.md](ASSETS_GUIDE.md)**（含可直接贴给 AI 编码工具的自动化任务描述）。要点：
+
+- 图片以图鉴编号 `1-151` 为键（如 `artwork/official/25.png` = 皮卡丘），后端把 `assets/` 挂在 `/static` 下按编号拼 URL；对战画面需要正面（`gen1-red-blue/`）与背面（`gen1-red-blue-back/`）两套战斗精灵，缩略图 `thumb/` 由 `make_thumbs.py` 本地生成；缺失时前端自动隐藏占位、不影响玩法
+- 上游数值表来自 veekun/pokedex 的 CSV 导出（MIT），按 `ASSETS_GUIDE.md` 的脚本顺序自动派生到 `assets/out/`，无需手写任何数值
+- 玩法层数据（区域/道馆/学习表口径/进化折算）为本项目原创，已手写在仓库脚本内
+- 素材请仅在本地/自有设备使用，**请勿将素材本身打包传播**
 
 ## 测试与部署
 
