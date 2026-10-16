@@ -92,14 +92,15 @@ PKM_DB_ENGINE=sqlite python -m uvicorn app.main:app --port 8300
 
 > MySQL 模式：先建库 `CREATE DATABASE pokemon_homework CHARACTER SET utf8mb4`，再用环境变量 `PKM_DB_HOST / PKM_DB_USER / PKM_DB_PASS` 覆盖默认值（默认是本机 root 无密码的开发配置），并执行 `sql/01_business.sql`、`sql/02_device_token.sql`。
 
-## 素材准备（本仓库不含）
+## 自备素材与构建数据（本仓库不含）
 
-应用运行需要宝可梦立绘与战斗精灵、上游数据表与派生静态数据，因版权原因**不随仓库分发**。完整的自备清单、上游数据源、构建顺序与验证方法见 **[ASSETS_GUIDE.md](ASSETS_GUIDE.md)**（含可直接贴给 AI 编码工具的自动化任务描述）。要点：
+仓库提供**全部代码 + 玩法口径脚本**，因版权原因不含图片与上游数据。新使用者补齐后一键起服务，完整指引见 **[ASSETS_GUIDE.md](ASSETS_GUIDE.md)**，最短路径三步：
 
-- 图片以图鉴编号 `1-151` 为键（如 `artwork/official/25.png` = 皮卡丘），后端把 `assets/` 挂在 `/static` 下按编号拼 URL；对战画面需要正面（`gen1-red-blue/`）与背面（`gen1-red-blue-back/`）两套战斗精灵，缩略图 `thumb/` 由 `make_thumbs.py` 本地生成；缺失时前端自动隐藏占位、不影响玩法
-- 上游数值表来自 veekun/pokedex 的 CSV 导出（MIT），按 `ASSETS_GUIDE.md` 的脚本顺序自动派生到 `assets/out/`，无需手写任何数值
-- 玩法层数据（区域/道馆/学习表口径/进化折算）为本项目原创，已手写在仓库脚本内
-- 素材请仅在本地/自有设备使用，**请勿将素材本身打包传播**
+1. **图片**：`assets/artwork/` 下按编号 `1-151` 放入三套 PNG（立绘 `official/`、战斗精灵正面 `gen1-red-blue/`、背面 `gen1-red-blue-back/`，PokeAPI sprites 镜像可批量下载），缩略图跑 `python backend/make_thumbs.py` 生成；缺失自动隐藏占位、不影响玩法。叫声/BGM 当前版本未使用，无需准备
+2. **数据**：下载 veekun/pokedex 的 CSV 导出（MIT）放入 `assets/veekun-csv/`，在 `backend/` 按 ASSETS_GUIDE 第 4 节跑六步流水线，自动产出 `assets/out/` 十张静态表 SQL——**无需手写任何数值**（学习表口径、区域/道馆剧情、进化折算等项目原创规则已内置在仓库脚本里）
+3. **启动**：`python app/init_db.py` 一键建库导数据，起服务后 `python _smoke_all.py` 应输出 ALL PASSED
+
+素材仅限本地/自有设备使用，**请勿打包传播**（版权边界详见 ASSETS_GUIDE 第 6 节）。
 
 ## 测试与部署
 
