@@ -138,13 +138,15 @@ def delete_device(token: str, tok=Depends(parent_auth)):
 
 @router.get("/tasks")
 def list_tasks(tok=Depends(parent_auth)):
-    return db.q("SELECT id,task_name,icon,category,enabled,sort FROM task_template "
-                "WHERE parent_id=%s ORDER BY sort,id", (tok["uid"],))
+    # v19：category 不再返回（纯展示字段无业务用途；表列保留避免迁移）
+    # v19b 家长定稿：停用任务不展示（停用=不占用列表；恢复走 PUT enabled=true）
+    return db.q("SELECT id,task_name,icon,enabled,sort FROM task_template "
+                "WHERE parent_id=%s AND enabled=1 ORDER BY sort,id", (tok["uid"],))
 
 @router.get("/child/tasks")
 def child_tasks(tok=Depends(kid_auth)):
     stu = db.q("SELECT parent_id FROM student_user WHERE id=%s", (tok["uid"],))[0]
-    return db.q("SELECT id,task_name,icon,category FROM task_template "
+    return db.q("SELECT id,task_name,icon FROM task_template "
                 "WHERE parent_id=%s AND enabled=1 ORDER BY sort,id", (stu["parent_id"],))
 
 @router.post("/tasks")
@@ -154,10 +156,49 @@ def add_task(body: TaskIn, tok=Depends(parent_auth)):
                (tok["uid"], body.task_name, body.icon, body.category, cur[0]["m"]), ret_id=True)
     return {"id": rid}
 
+@router.put("/tasks/reorder")
+def reorder_tasks(body: dict, tok=Depends(parent_auth)):
+    """v19 任务排序：ids=家长页当前顺序全量 id 列表，按序重排 sort=0,1,2...
+    仅接受属于本家长的 id，多余/不存在的静默忽略。"""
+    ids = [int(i) for i in body.get("ids", [])]
+    owned = {r["id"] for r in db.q("SELECT id FROM task_template WHERE parent_id=%s", (tok["uid"],))}
+    s = 0
+    for tid in ids:
+        if tid in owned:
+            db.x("UPDATE task_template SET sort=%s WHERE id=%s AND parent_id=%s", (s, tid, tok["uid"]))
+            s += 1
+    return {"ok": True, "moved": s}
+
 @router.put("/tasks/{tid}")
 def update_task(tid: int, body: dict, tok=Depends(parent_auth)):
-    db.x("UPDATE task_template SET enabled=%s WHERE id=%s AND parent_id=%s",
-         (1 if body.get("enabled", True) else 0, tid, tok["uid"]))
+    """v19：可改 task_name / enabled（原仅 enabled）；返回更新后的完整行。"""
+    rows = db.q("SELECT id,task_name,icon,enabled,sort FROM task_template "
+                "WHERE id=%s AND parent_id=%s", (tid, tok["uid"]))
+    if not rows:
+        raise HTTPException(404, "没有这个任务")
+    if "task_name" in body:
+        name = str(body["task_name"]).strip()
+        if not name:
+            if len(rows) and not rows[0]["enabled"]:
+                # v19b UI：任务留空=停用（停用的行不出现在列表，✏️恢复需带原提交名）
+                db.x("UPDATE task_template SET task_name=%s WHERE id=%s", (name, tid))
+            else:
+                raise HTTPException(400, "任务名称不能为空且不超过50字")
+        elif len(name) > 50:
+            raise HTTPException(400, "任务名称不能为空且不超过50字")
+        else:
+            db.x("UPDATE task_template SET task_name=%s WHERE id=%s", (name, tid))
+    if "enabled" in body:
+        db.x("UPDATE task_template SET enabled=%s WHERE id=%s",
+             (1 if body["enabled"] else 0, tid))
+    return db.q("SELECT id,task_name,icon,enabled,sort FROM task_template WHERE id=%s", (tid,))[0]
+
+@router.delete("/tasks/{tid}")
+def delete_task(tid: int, tok=Depends(parent_auth)):
+    """v19 真删（UI 二次确认）。历史打卡 item_json 为任务名快照，删任务不影响历史记录。"""
+    n = db.x("DELETE FROM task_template WHERE id=%s AND parent_id=%s", (tid, tok["uid"]))
+    if not n:
+        raise HTTPException(404, "没有这个任务")
     return {"ok": True}
 
 EDITABLE = {"daily_base_exp", "daily_cap", "fast_deadline", "fast_multiplier",

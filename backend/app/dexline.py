@@ -49,12 +49,30 @@ def walk(start, adj):
 
 def _evo_graph():
     # 进化表进程内不变量（同一 seed 数据），缓存安全；空表不缓存（防脏启动）
+    # 注：rebuild 脚本会重写 pkm_evolution——需热更新时调 reload_evo_graph()
     if not _evo_graph.cache:
         edges = db.q("SELECT from_no, to_no FROM pkm_evolution")
         if edges:
             _evo_graph.cache = chain_maps(edges)
     return _evo_graph.cache
 _evo_graph.cache = None
+
+
+def reload_evo_graph():
+    """清进化图缓存（进化表 rebuild 后调用，防进程内缓存僵死）。"""
+    _evo_graph.cache = None
+    _FAMILY_CACHE.clear()
+
+
+_FAMILY_CACHE = {}
+
+def family_nos(no: int):
+    """整条进化链的编号集合（前身+自身+后代，连通分量口径）。
+    用于家族技能池：进化后保留旧形态已学招（家长定稿：已学袋永不遗忘）。"""
+    if no not in _FAMILY_CACHE:
+        fwd, rev = _evo_graph()
+        _FAMILY_CACHE[no] = walk({no}, fwd) | walk({no}, rev)
+    return _FAMILY_CACHE[no]
 
 
 def lit_set(sid):

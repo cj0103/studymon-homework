@@ -126,12 +126,13 @@ async function appr(id,penalty){
 async function rej(id){ const reason=prompt("驳回原因（孩子会看到）")||""; await api("/parent/reject",{method:"POST",body:{checkin_id:id,reason}}); PR.today(); }
 
 /* ---------- 任务库/配置 ---------- */
+/* v19：任务全管理——改名/停用/真删(二次确认)/↑↓排序；category 不再展示 */
+let TASKS = [];
 PR.tasks = async ()=>{
   const [tasks,cfg] = await Promise.all([api("/tasks"), api("/config")]);
+  TASKS = tasks;
   $("#app").innerHTML = `<div class="card"><h3>🧾 任务菜单（孩子勾选用）</h3>
-    ${tasks.map(t=>`<div style="padding:6px 0;border-bottom:1px solid #f3f3f3">
-      ${t.enabled?"✅":"⛔"} ${esc(t.task_name)} <small>(${t.category==="study"?"学习":"生活"})</small>
-      <button class="btn-g" style="float:right;padding:3px 10px;font-size:12px" onclick="tog(${t.id},${t.enabled?0:1})">${t.enabled?"停用":"启用"}</button></div>`).join("")}
+    <div id="tasklist">${taskRows()}</div>
     <div style="margin-top:8px"><input id="nt" placeholder="新任务名称（如：做家务）">
     <button class="btn-b" onclick="addTask()">添加</button></div></div>
   <div class="card"><h3>⚙️ 经验规则</h3>
@@ -139,8 +140,35 @@ PR.tasks = async ()=>{
       .map(([k,l])=>`<div style="padding:4px 0">${l} <input style="width:100px;display:inline-block;padding:5px" id="cf_${k}" value="${esc(cfg[k])}">
       <button class="btn-g" style="padding:4px 10px;font-size:12px" onclick="saveCfg('${k}')">存</button></div>`).join("")}</div>`;
 };
-async function tog(id,cur){ await api("/tasks/"+id,{method:"PUT",body:{enabled:!cur}}); PR.tasks(); }
-async function addTask(){ const n=$("#nt").value.trim(); if(!n)return; await api("/tasks",{method:"POST",body:{task_name:n}}); PR.tasks(); }
+function taskRows(){
+  return TASKS.map((t,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #f3f3f3">
+    <span style="color:#bbb;font-size:13px;width:18px">${i+1}</span>
+    <span style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(t.task_name)}</span>
+    <button class="btn-g" style="padding:3px 8px;font-size:13px" ${i==0?"disabled":""} onclick="mvTask(${i},-1)">↑</button>
+    <button class="btn-g" style="padding:3px 8px;font-size:13px" ${i==TASKS.length-1?"disabled":""} onclick="mvTask(${i},1)">↓</button>
+    <button class="btn-g" style="padding:3px 8px;font-size:13px" onclick="editTask(${t.id})">✏️</button>
+    <button class="btn-g" style="padding:3px 8px;font-size:13px;color:#c00" onclick="delTask(${t.id})">删</button>
+  </div>`).join("") || `<p style="color:#999;font-size:13px">还没有任务，下面添加一个</p>`;
+}
+function paint(){ $("#tasklist").innerHTML = taskRows(); }
+async function syncOrder(){ await api("/tasks/reorder",{method:"PUT",body:{ids:TASKS.map(t=>t.id)}}); }
+async function mvTask(i,d){ const j=i+d; if(j<0||j>=TASKS.length)return;
+  const a=TASKS.splice(i,1)[0]; TASKS.splice(j,0,a); paint(); await syncOrder(); }
+async function editTask(id){ const t=TASKS.find(x=>x.id==id); if(!t)return;
+  const n=prompt("任务名称（输入名称=改名/恢复启用；留空=停用，孩子端不再显示）",t.task_name);
+  if(n===null)return;
+  const v=n.trim();
+  if(!v){ const r=await api("/tasks/"+id,{method:"PUT",body:{enabled:false}}); Object.assign(t,r); paint();
+    return toast("已停用（想恢复请点 ✏️ 输入名称）"); }
+  const r = await api("/tasks/"+id,{method:"PUT",body:{task_name:v,enabled:true}});
+  Object.assign(t,r); paint(); toast("已保存"); }
+async function delTask(id){ const t=TASKS.find(x=>x.id==id); if(!t)return;
+  if(!confirm(`删除任务「${t.task_name}」？历史记录不受影响`))return;
+  await api("/tasks/"+id,{method:"DELETE"}); TASKS=TASKS.filter(x=>x.id!=id); paint();
+  await syncOrder(); toast("已删除"); }
+async function addTask(){ const n=$("#nt").value.trim(); if(!n)return;
+  const r = await api("/tasks",{method:"POST",body:{task_name:n}});
+  const t = await api("/tasks"); TASKS=t; paint(); }
 async function saveCfg(k){ await api("/config",{method:"PUT",body:{key:k,value:$("#cf_"+k).value}}); toast("已保存"); }
 
 /* ---------- 成员管理 ---------- */

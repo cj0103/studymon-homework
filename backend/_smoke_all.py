@@ -41,6 +41,12 @@ try:
     if _f17:
         print("[DRIVER] v17 专项 FAILS:", _f17, flush=True)
         raise SystemExit(1)
+    print("[DRIVER] ===== v19 专项开始 =====", flush=True)
+    _t19 = runpy.run_path("_v19_task_test.py", run_name="__main__")
+    _f19 = _t19.get("FAILS", [])
+    if _f19:
+        print("[DRIVER] v19 专项 FAILS:", _f19, flush=True)
+        raise SystemExit(1)
     # v16：v12 把队伍清空后未恢复（历史遗留，v15 组队依赖此修复）
     import json as _json
     from app import db as _d
@@ -51,7 +57,7 @@ try:
         _d.x("UPDATE trainer_pokemon SET is_in_team=1, slot=0, learned_skill_json=%s WHERE id=%s",
              (_json.dumps(_mvv), _t[0]["id"]))
         print("[DRIVER] v16 恢复出战 1 只有招怪 id=", _t[0]["id"], flush=True)
-    print("[DRIVER] ALL PASSED (smoke + v12 + v15 + v17)", flush=True)
+    print("[DRIVER] ALL PASSED (smoke + v12 + v15 + v17 + v19)", flush=True)
 except SystemExit as e:
     _rc = e.code or 0
 except BaseException:

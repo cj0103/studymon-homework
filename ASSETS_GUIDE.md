@@ -179,7 +179,7 @@ PKM_APPLY=1 python rebuild_gym_teams.py
 cd backend
 python reset_game.py        # 清动态数据（保留账号）——冒烟前置，必须跑
 python _smoke_all.py        # 全量回归，期望末行：
-                            # [DRIVER] ALL PASSED (smoke + v12 + v15 + v17)
+                            # [DRIVER] ALL PASSED (smoke + v12 + v15 + v17 + v19)
 ```
 
 冒烟内置一组**口径哨兵断言**：皮卡丘无进化链、破坏光线 Lv28、前后端克制表 82 格逐格一致、开档皮卡丘带 3 招等。流水线哪步跑歪，这里会红给你看。
@@ -248,7 +248,7 @@ python _smoke_all.py        # 全量回归，期望末行：
    再依次重跑 trim_moves.py / rebuild_wild.py / rebuild_gym_teams.py（带 PKM_APPLY=1，
    把 out/ 底稿对齐到最终口径）。
 8. python reset_game.py && python _smoke_all.py，直到末行输出
-   ALL PASSED (smoke + v12 + v15 + v17)，任何 FAIL 都要定位修复而不是跳过。
+   ALL PASSED (smoke + v12 + v15 + v17 + v19)，任何 FAIL 都要定位修复而不是跳过。
 
 红线：所有素材与数据仅存本地，不上传网盘、不打包分享、不部署到公网供他人访问。
 ```
