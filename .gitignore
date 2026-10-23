@@ -17,8 +17,8 @@ assets/pokegenetic-audio/
 assets/*.log
 assets/dl*.py
 assets/check_moves.py
-assets/build_import.py
-assets/make_thumbs.py
+# 注：build_import.py / make_thumbs.py 是自制构建脚本（不含版权数据），ASSETS_GUIDE
+# 流水线的必需环节，入库分发——曾被本段误拦导致新使用者 S1 步骤找不到脚本
 
 # 部署脚本与运维记录（含服务器地址/凭据，属本地私有）
 _deploy*
