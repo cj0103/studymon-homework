@@ -37,6 +37,7 @@ backend/_fix*
 backend/_learn_fix*
 backend/_make_icon.py
 backend/_flavor/
+backend/_gift*
 
 # 工作区杂项
 .workbuddy/
