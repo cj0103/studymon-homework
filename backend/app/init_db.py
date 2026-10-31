@@ -178,7 +178,8 @@ def main():
                                 ("seal_start_date", "trainer_pokemon", "DATE"),
                                 ("hunt_region_id", "student_user", "INT NOT NULL DEFAULT 0"),
                                 ("caught_today", "student_user", "INT NOT NULL DEFAULT 0"),
-                                ("catch_date", "student_user", "DATE")]:
+                                ("catch_date", "student_user", "DATE"),
+                                ("weekend_only", "task_template", "TINYINT NOT NULL DEFAULT 0")]:
             cols = [r[1] for r in c.execute(f"PRAGMA table_info({table})")]
             if col not in cols:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
@@ -202,7 +203,8 @@ def main():
                                     ("seal_start_date", "trainer_pokemon", "DATE NULL"),
                                     ("hunt_region_id", "student_user", "INT NOT NULL DEFAULT 0"),
                                     ("caught_today", "student_user", "INT NOT NULL DEFAULT 0"),
-                                    ("catch_date", "student_user", "DATE NULL")]:
+                                    ("catch_date", "student_user", "DATE NULL"),
+                                    ("weekend_only", "task_template", "TINYINT NOT NULL DEFAULT 0")]:
                 cur.execute(f"SHOW COLUMNS FROM {table} LIKE %s", (col,))
                 if not cur.fetchone():
                     cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")

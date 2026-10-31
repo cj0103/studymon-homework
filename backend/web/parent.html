@@ -127,6 +127,8 @@ async function rej(id){ const reason=prompt("驳回原因（孩子会看到）")
 
 /* ---------- 任务库/配置 ---------- */
 /* v19：任务全管理——改名/停用/真删(二次确认)/↑↓排序；category 不再展示 */
+/* v22：追赶加成三参数——旧库未补种时 GET /config 无键，前端按后端同口径默认值兜底显示 */
+const CATCHUP_DEF = {catchup_base:"1.30", catchup_max_mult:"8", catchup_dead:"0"};
 let TASKS = [];
 PR.tasks = async ()=>{
   const [tasks,cfg] = await Promise.all([api("/tasks"), api("/config")]);
@@ -138,12 +140,22 @@ PR.tasks = async ()=>{
   <div class="card"><h3>⚙️ 经验规则</h3>
     ${[["daily_base_exp","每日定额"],["daily_cap","每日上限"],["fast_deadline","快手截止"],["fast_multiplier","快手系数"],["streak_bonus_days","连击天数"],["streak_bonus_exp","连击奖励"],["exp_split_mode","分配(even/lead)"]]
       .map(([k,l])=>`<div style="padding:4px 0">${l} <input style="width:100px;display:inline-block;padding:5px" id="cf_${k}" value="${esc(cfg[k])}">
-      <button class="btn-g" style="padding:4px 10px;font-size:12px" onclick="saveCfg('${k}')">存</button></div>`).join("")}</div>`;
+      <button class="btn-g" style="padding:4px 10px;font-size:12px" onclick="saveCfg('${k}')">存</button></div>`).join("")}</div>
+  <div class="card"><h3>🚀 追赶加成（v22）</h3>
+    <p style="font-size:13px;color:#666;margin:2px 0 8px">队伍中离<b>下一道馆推荐级</b>差得越多的宝可梦，上场分到的经验越多：倍数 = 底数^差距级，到推荐级自动取消。重复捕捉的经验包不吃此加成。</p>
+    ${[["catchup_base","指数底数","1.30=每差1级×1.30；填 1 =关闭加成"],
+       ["catchup_max_mult","倍率封顶","如 8：最多翻8倍（建议2~15）"],
+       ["catchup_dead","死区级数","差距≤N级不吃加成；0=关（到级恒取消）"]]
+      .map(([k,l,hint])=>`<div style="padding:4px 0">${l} <input style="width:100px;display:inline-block;padding:5px" id="cf_${k}" value="${esc(cfg[k]??CATCHUP_DEF[k])}">
+      <button class="btn-g" style="padding:4px 10px;font-size:12px" onclick="saveCfg('${k}')">存</button>
+      <span style="font-size:12px;color:#999">${hint}</span></div>`).join("")}
+    <p style="font-size:12px;color:#999;margin:6px 0 0">当前孩子基准级见孩子页道馆进度；改完即对下一次打卡生效</p></div>`;
 };
 function taskRows(){
   return TASKS.map((t,i)=>`<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #f3f3f3">
     <span style="color:#bbb;font-size:13px;width:18px">${i+1}</span>
-    <span style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(t.task_name)}</span>
+    <span style="flex:1;min-width:0;overflow-wrap:anywhere">${esc(t.task_name)}${t.weekend_only?' <span style="font-size:12px;color:#0369a1" title="仅周六周日出现在孩子任务里">📆周末</span>':''}</span>
+    <button class="btn-g" style="padding:3px 8px;font-size:13px" title="切换：每天 / 仅周六周日出现" onclick="toggleWeekend(${t.id})">${t.weekend_only?"📅每天":"📆周末"}</button>
     <button class="btn-g" style="padding:3px 8px;font-size:13px" ${i==0?"disabled":""} onclick="mvTask(${i},-1)">↑</button>
     <button class="btn-g" style="padding:3px 8px;font-size:13px" ${i==TASKS.length-1?"disabled":""} onclick="mvTask(${i},1)">↓</button>
     <button class="btn-g" style="padding:3px 8px;font-size:13px" onclick="editTask(${t.id})">✏️</button>
@@ -154,6 +166,10 @@ function paint(){ $("#tasklist").innerHTML = taskRows(); }
 async function syncOrder(){ await api("/tasks/reorder",{method:"PUT",body:{ids:TASKS.map(t=>t.id)}}); }
 async function mvTask(i,d){ const j=i+d; if(j<0||j>=TASKS.length)return;
   const a=TASKS.splice(i,1)[0]; TASKS.splice(j,0,a); paint(); await syncOrder(); }
+async function toggleWeekend(id){ const t=TASKS.find(x=>x.id==id); if(!t)return;
+  const r=await api("/tasks/"+id,{method:"PUT",body:{weekend_only:t.weekend_only?0:1}});
+  Object.assign(t,r); paint();
+  toast(r.weekend_only?"已设为仅周末：孩子只在周六周日看到「"+r.task_name+"」":"已设为每天可见"); }
 async function editTask(id){ const t=TASKS.find(x=>x.id==id); if(!t)return;
   const n=prompt("任务名称（输入名称=改名/恢复启用；留空=停用，孩子端不再显示）",t.task_name);
   if(n===null)return;

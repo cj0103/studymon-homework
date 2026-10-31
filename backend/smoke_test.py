@@ -90,9 +90,15 @@ expect = 230 + (46 if quick else 0) - 10   # 引擎（千分比整数）：230+4
 print(f"    >> 首日实发 exp_final={c1}, 预期={expect} (快手={quick})")
 assert c1 == expect, f"经验结算错误: {c1} != {expect}"
 mons3 = call("GET", "/child/pokemon", token=STK, note="审批后经验核对")
-tot = sum(m["total_exp"] for m in mons3)
-print(f"    >> 队伍经验合计={tot} (应≈{c1}, 平分3人)")
-assert abs(tot - c1) <= 3, f"经验分配不符: {tot} vs {c1}"
+# v22 追赶加成：total_exp 含入袋门槛回填值，不能再与当日发放额直接对账；
+# 改以 exp_log 当日 delta 合计对账——单只 Lv1 皮卡丘差距=基准16−1=15 → n=1.3^15 触顶×8，
+# 实发 = int(份额 × 8) ≥ 平份额，且 exp_final（cap 口径）仍是发放上限
+import sqlite3 as _s3
+_c = _s3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pkm.sqlite3"))
+_delta = _c.execute("SELECT COALESCE(SUM(exp_delta),0) s FROM exp_log WHERE student_id=1 AND reason='checkin'").fetchone()[0]
+_c.close()
+print(f"    >> 当日发放 delta 合计={_delta} (追赶加成 v22：低怪 n>1 → delta≥{c1})")
+assert _delta >= c1, f"发放端异常: delta={_delta} < exp_final={c1}"
 call("POST", "/parent/approve", {"checkin_id": cid}, token=PTK, expect=400, note="重复审批应400")
 
 print("========== 4. 待审直接驳回（未发不扣） ==========")
@@ -105,16 +111,19 @@ rid2 = cur.lastrowid
 db.commit(); db.close()
 call("POST", "/parent/reject", {"checkin_id": rid2, "reason": "字迹潦草重做"}, token=PTK, note="驳回昨日待审(带原因)")
 mons4 = call("GET", "/child/pokemon", token=STK, note="驳回后经验不变")
-assert sum(m["total_exp"] for m in mons4) == tot, "驳回误扣经验！"
+assert sum(m["total_exp"] for m in mons4) == sum(m["total_exp"] for m in mons3), "驳回误扣经验！"
 h = call("GET", "/parent/history", token=PTK, note="打卡历史(含驳回+扣批)")
 assert any(r["status"] == 4 for r in h) and any(r["status"] == 3 for r in h), "历史应含驳回与扣批记录"
 
 print("========== 5. 已批记录反向撤销（驳回已发经验） ==========")
+_exp5 = sum(m["total_exp"] for m in mons4) - _delta   # 起点=撤销前累计−当日发放（回收精确对账基准）
+# 地板=max(0,…) 钳位：total_exp 不足回收额时按现有值扣光，钳掉多少回收就少扣多少
+_clamped = max(0, _delta - sum(m["total_exp"] for m in mons4))
 call("POST", "/parent/reject", {"checkin_id": cid, "reason": "撤销测试"}, token=PTK, note="驳回今日已批记录")
 mons5 = call("GET", "/child/pokemon", token=STK, note="撤销后经验应扣回")
 back = sum(m["total_exp"] for m in mons5)
-print(f"    >> 撤销后队伍经验={back} (应≈0)")
-assert back <= 3, f"撤销未扣回: {back}"
+print(f"    >> 撤销后队伍经验={back} (应={_exp5}，钳位{_clamped}——回收=min(实发,现有值)口径)")
+assert back == _exp5, f"撤销回收不精确: {back} != {_exp5}"
 # 恢复：重新init数据太破坏，改用直接补一笔批准场景留待前端联调
 
 print("========== 6. 道馆/野生（战斗闸门） ==========")
@@ -385,8 +394,10 @@ os.environ["PKM_DB_ENGINE"] = "sqlite"
 import app.db as _db3m
 from app.routers import battle as _bt
 
+_mk_seq = [0]
 def _mk(hp=100, atk=50, dfn=50, name="测试兽", types=("一般",)):
-    return {"ref": "t0", "pokedex_no": 999, "name": name, "level": 50,
+    _mk_seq[0] += 1
+    return {"ref": f"t{_mk_seq[0]}", "pokedex_no": 999, "name": name, "level": 50,
             "types": list(types), "stats": {"hp": hp, "atk": atk, "def": dfn, "spd": 40},
             "hp": hp, "moves": [], "status": None}
 
@@ -397,10 +408,10 @@ _bt._apply_status_effect(u_caster, u_slp,
      "effect_type": "status_sleep", "effect_value": None, "ailment": "sleep", "ailment_chance": 100}, [], True)
 assert u_slp["status"] and u_slp["status"]["ailment"] == "sleep", "催眠术未施加睡眠"
 u_fir = _mk(name="小火龙", types=("火",))
-_bt._try_inflict(u_fir, "burn", [], True)
+_bt._try_inflict(u_fir, "burn", [], target_foe_side=True)
 assert u_fir["status"] is None, "火系应免疫烧伤"
 u_rock = _mk(name="小拳石", types=("岩石", "地面"))
-_bt._try_inflict(u_rock, "poison", [], True)
+_bt._try_inflict(u_rock, "poison", [], target_foe_side=True)
 assert u_rock["status"] is None, "地/岩系应免疫中毒"
 u_psn = _mk(hp=80); u_psn["status"] = {"ailment": "poison", "turns": 99}
 _bt._poison_tick(u_psn, [], True)
@@ -440,12 +451,31 @@ _sess3 = {"buffs": {}}; _bt._CUR_SESS[0] = _sess3
 _bt._apply_status_effect(_mk(name="我方"), (tgt := _mk(name="敌方")),
     {"id": 7, "skill_name": "瞪眼", "skill_type": "一般", "power": 0, "accuracy": 100,
      "effect_type": "def_down", "effect_value": 0.7, "ailment": None, "ailment_chance": 0}, [], True)
-assert _sess3["buffs"].get(tgt["ref"]) == 0.7, "减益应作用于对手ref"
-selfu = _mk(name="剑士"); _sess3["buffs"][selfu["ref"]] = 1.5
+assert _sess3["buffs"].get(tgt["ref"], {}).get("def") == 0.7, "v23 减益应写对手ref的def通道"
+selfu = _mk(name="剑士"); _sess3["buffs"][selfu["ref"]] = {"atk": 1.5}
 _bt._apply_status_effect(selfu, selfu,
     {"id": 8, "skill_name": "剑舞", "skill_type": "一般", "power": 0, "accuracy": 100,
      "effect_type": "atk_up", "effect_value": 2.0, "ailment": None, "ailment_chance": 0}, [], False)
-assert _sess3["buffs"][selfu["ref"]] == 2.0, "增益应封顶2.0"
+assert _sess3["buffs"][selfu["ref"]] == {"atk": 2.0}, "v23 增益应封顶2.0且只动atk通道"
+# v23 双通道互不覆盖：怪已有攻↑×1.5，再变硬只写防通道、atk 通道原样保留
+hardu = _mk(name="铁壁兽"); _sess3["buffs"][hardu["ref"]] = {"atk": 1.5}  # 前置剑舞态
+_bt._apply_status_effect(hardu, hardu,
+    {"id": 10, "skill_name": "变硬", "skill_type": "一般", "power": 0, "accuracy": 100,
+     "effect_type": "def_up", "effect_value": 1.5, "ailment": None, "ailment_chance": 0}, [], False)
+assert _sess3["buffs"][hardu["ref"]] == {"atk": 1.5, "def": 1.5}, \
+    f"v23 变硬只写def通道、atk原样保留：{_sess3['buffs'][hardu['ref']]}"
+# v23 防御通道真正参与伤害：变硬（防×1.5）应减伤，瞪眼（防×0.7）应增伤
+_sdef = {"buffs": {}}
+_ud, _dd = _mk(atk=80), _mk(dfn=50)
+_bt._attack_step(_ud, _dd, atk_mv, _sdef, True, []); dmg_base = 100 - _dd["hp"]
+_u2, _d2u = _mk(atk=80), _mk(dfn=50)
+_sdef["buffs"] = {_d2u["ref"]: {"def": 1.5}}
+_bt._attack_step(_u2, _d2u, atk_mv, _sdef, True, []); dmg_hard = 100 - _d2u["hp"]
+_u3, _d3u = _mk(atk=80), _mk(dfn=50)
+_sdef["buffs"] = {_d3u["ref"]: {"def": 0.7}}
+_bt._attack_step(_u3, _d3u, atk_mv, _sdef, True, []); dmg_glare = 100 - _d3u["hp"]
+assert dmg_hard < dmg_base < dmg_glare, \
+    f"v23 防御buff应生效：变硬{dmg_hard} < 基准{dmg_base} < 瞪眼{dmg_glare}"
 _bt._CUR_SESS[0] = None
 print("    >> 状态引擎单元 OK：施加/免疫/毒伤/苏醒/回复/吸血/地裂/烧伤减半/减益对敌/增益封顶")
 print("    >> v3 全链路通过 ✅")
@@ -690,6 +720,63 @@ except Exception as _e5:
 _bt5.SESSIONS.pop(998, None)
 _bt5._CUR_SESS[0] = None
 print("    >> PP 耗尽 400 拦截 OK")
+# ---- v23：中毒致死判定（我方毒死不诈尸、对方毒死判胜），直调 act 会话997/996 ----
+def _mk_v23(ref, no, name, hp, atk, dfn, spd, mv, pps=None, st=None, cur=None):
+    # v23 毒伤=最大HP(stats.hp)//8，cur 控制当前血量以构造"残血毒死"场景
+    return {"ref": ref, "pokedex_no": no, "name": name, "level": 10, "types": ["一般"],
+            "stats": {"hp": hp, "atk": atk, "def": dfn, "spd": spd},
+            "hp": cur if cur is not None else hp,
+            "status": st, "moves": [mv], "pp": {mv["id"]: pps or 8}}
+_mv_v23 = {"id": 1, "skill_name": "撞击", "skill_type": "一般", "power": 40,
+           "accuracy": 100, "effect_type": None, "effect_value": None,
+           "ailment": None, "ailment_chance": 0, "priority": 0, "max_pp": 8}
+_psn = {"ailment": "poison", "turns": 99}
+# 997：我方残血中毒（毒伤10≥hp8），对方攻击为0 → 应毒发倒下换人、不判胜
+_bt5.SESSIONS[997] = {"kind": "wild", "sid": 997, "buffs": {}, "wild": {}, "wild_level": 5,
+    "my": [_mk_v23("p1", 25, "皮卡丘", 80, 10, 10, 90, dict(_mv_v23), st=dict(_psn), cur=8),
+           _mk_v23("p2", 25, "皮卡丘B", 40, 10, 10, 10, dict(_mv_v23))],
+    "foe": [_mk_v23("w0", 16, "波波", 100, 0, 50, 5, dict(_mv_v23))]}
+_r97 = _bt5.act({"action": "attack", "skill_id": 1}, {"uid": 997})
+_j97 = "\n".join(_r97["messages"])
+assert _r97["result"] == "continue" and _r97["my_idx"] == 1, \
+    f"v23 我方毒死应换人continue：{_r97['result']} my_idx={_r97.get('my_idx')}"
+assert "因中毒倒下" in _j97 and "上吧，皮卡丘B" in _j97, f"v23 我方毒死应播报倒下+换人: {_j97}"
+_bt5.SESSIONS.pop(997, None)
+# 996：我方（速度90）攻击高、对方中毒残血（毒死）；我方也中毒但毒不死 → 判败北方=对方，
+# 我方无后备照样 win（v5a 原版口径：被击杀者失去行动，毒发同权）
+_bt5.SESSIONS[996] = {"kind": "wild", "sid": 996, "buffs": {}, "wild": {}, "wild_level": 5,
+    "my": [_mk_v23("p1", 25, "皮卡丘", 80, 999, 10, 90, dict(_mv_v23), st=dict(_psn))],
+    "foe": [{"ref": "w0", "pokedex_no": 16, "name": "波波", "level": 90, "types": ["飞行"],
+             "stats": {"hp": 96, "atk": 5, "def": 10, "spd": 5}, "hp": 10, "status": dict(_psn),
+             "moves": [dict(_mv_v23)], "move_weights": [1.0], "pp": {1: 8}}]}
+_r96 = _bt5.act({"action": "attack", "skill_id": 1}, {"uid": 996})
+_j96 = "\n".join(_r96["messages"])
+assert _r96["result"] == "win", f"v23 先手击杀中毒对方应判胜：{_r96['result']} / {_j96}"
+assert "倒下了" in _j96, f"v23 对方应有倒下播报: {_j96}"
+_bt5.SESSIONS.pop(996, None)
+# 994：我方先手毒发倒下且无后备，对方（慢速）也中毒但毒不死 → 判败北且对方不诈尸出手
+_bt5.SESSIONS[994] = {"kind": "wild", "sid": 994, "buffs": {}, "wild": {}, "wild_level": 5,
+    "my": [_mk_v23("p1", 25, "皮卡丘", 80, 10, 10, 90, dict(_mv_v23), st=dict(_psn), cur=8)],
+    "foe": [{"ref": "w0", "pokedex_no": 16, "name": "波波", "level": 90, "types": ["飞行"],
+             "stats": {"hp": 96, "atk": 5, "def": 200, "spd": 5}, "hp": 96, "status": dict(_psn),
+             "moves": [dict(_mv_v23)], "move_weights": [1.0], "pp": {1: 8}}]}
+_r94 = _bt5.act({"action": "attack", "skill_id": 1}, {"uid": 994})
+_j94 = "\n".join(_r94["messages"])
+assert _r94["result"] == "lose", f"v23 我方毒死无备应判负：{_r94['result']} / {_j94}"
+assert "使用 撞击" not in _j94, f"v23 我方毒死败北后对方不应再行动: {_j94}"
+_bt5.SESSIONS.pop(994, None)
+# 995：仅对方中毒残血 → 我方先手毒死对手应判胜（胜利结算走 _on_foe_down）
+_bt5.SESSIONS[995] = {"kind": "wild", "sid": 995, "buffs": {}, "wild": {}, "wild_level": 5,
+    "my": [_mk_v23("p1", 25, "皮卡丘", 40, 10, 10, 90, dict(_mv_v23), st=dict(_psn))],
+    "foe": [{"ref": "w0", "pokedex_no": 16, "name": "波波", "level": 90, "types": ["飞行"],
+             "stats": {"hp": 96, "atk": 5, "def": 200, "spd": 5}, "hp": 10, "status": dict(_psn),
+             "moves": [dict(_mv_v23)], "move_weights": [1.0], "pp": {1: 8}}]}
+_r95 = _bt5.act({"action": "attack", "skill_id": 1}, {"uid": 995})
+_j95 = "\n".join(_r95["messages"])
+assert _r95["result"] == "win", f"v23 毒死对方应判胜：{_r95['result']} / {_j95}"
+_bt5.SESSIONS.pop(995, None)
+_bt5._CUR_SESS[0] = None
+print("    >> v23 中毒致死判定 OK：我方毒死换人/判负、对方毒死判胜不诈尸")
 print("    >> v5 回合引擎单元 OK：对方先手→击杀→换人链路正确")
 call("PUT", "/config", {"key": "battle_weekday_open", "value": "0"}, token=PTK, note="节15-恢复仅周末")
 print("    >> v5 全链路通过 ✅")

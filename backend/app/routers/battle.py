@@ -51,11 +51,12 @@ def _rate(atk_type, def_types):
         r *= float(row["rate"])
     return r
 
-def _dmg(atk_stat, def_stat, power, type_rate, buff=1.0, burn=False):
+def _dmg(atk_stat, def_stat, power, type_rate, buff=1.0, burn=False, def_buff=1.0):
     # 项目公式: base = ((22*power*atk/def)/50)+2，
     # 烧伤(×0.5)与属性倍率均在取整前介入——×0.5 恰好精确减半（取整后再 //2 会丢精度）
+    # v23 修：def_buff=受方防御增减益（变硬↑防=分母×buff、瞪眼↓防=分母÷buff 即伤害×）
     atk_eff = atk_stat * buff * (0.5 if burn else 1.0)   # Gen1 烧伤：攻击输出减半
-    raw = ((22 * power * atk_eff) / (def_stat * 50)) + 2
+    raw = ((22 * power * atk_eff) / (def_stat * def_buff * 50)) + 2
     return max(1, int(raw * type_rate))
 
 # ---------------- 异常状态辅助 ----------------
@@ -116,7 +117,7 @@ def _poison_tick(unit, msgs, foe_side=False):
         who = f"对方的 {unit['name']}" if foe_side else unit["name"]
         msgs.append(f"{who} 因中毒受到 {d} 伤害！")
 
-def _try_inflict(target, ailment, msgs, foe_side=False):
+def _try_inflict(target, ailment, msgs, target_foe_side=False):
     """尝试对 target 施加异常状态（已有异常/免疫则忽略）。"""
     if not ailment or ailment not in AILMENT_CN:
         return
@@ -124,7 +125,7 @@ def _try_inflict(target, ailment, msgs, foe_side=False):
         return
     if ailment in IMMUNE and set(target["types"]) & IMMUNE[ailment]:
         return
-    who = f"对方的 {target['name']}" if foe_side else target["name"]
+    who = f"对方的 {target['name']}" if target_foe_side else target["name"]
     if ailment == "sleep":
         target["status"] = {"ailment": ailment, "turns": random.randint(1, 3)}
     elif ailment == "confuse":
@@ -142,20 +143,17 @@ def _apply_status_effect(caster, target, mv, msgs, target_foe_side):
         return "miss"
     caster_name = caster["name"]
     if et.startswith("status_"):
-        _try_inflict(target, mv["ailment"] or et[7:], msgs, foe_side=target_foe_side)
-    elif et in ("atk_up", "def_up"):
-        key = caster["ref"]
+        _try_inflict(target, mv["ailment"] or et[7:], msgs, target_foe_side=target_foe_side)
+    elif et in ("atk_up", "def_up", "atk_down", "def_down"):
+        # v23： buffs 拆双通道 {"atk":…, "def":…}（缺省 1.0，乘算钳位 [0.5, 2.0]）
+        key = caster["ref"] if et.endswith("_up") else target["ref"]
+        stat = "atk" if et.startswith("atk") else "def"
         sess = _CUR_SESS[0]
-        cur = sess["buffs"].get(key, 1.0)
-        mult = max(float(mv["effect_value"] or 1.5), 1.0)
-        sess["buffs"][key] = min(cur * mult, 2.0)
-        msgs.append(f"{caster_name} 使用 {mv['skill_name']}，{EFFECT_CN[et]}")
-    elif et in ("atk_down", "def_down"):
-        key = target["ref"]
-        sess = _CUR_SESS[0]
-        cur = sess["buffs"].get(key, 1.0)
-        mult = min(float(mv["effect_value"] or 0.7), 1.0)
-        sess["buffs"][key] = max(cur * mult, 0.5)
+        b = sess["buffs"].setdefault(key, {})
+        mult = max(float(mv["effect_value"] or 1.5), 1.0) if et.endswith("_up") \
+            else min(float(mv["effect_value"] or 0.7), 1.0)
+        cur = b.get(stat, 1.0)
+        b[stat] = min(max(cur * mult, 0.5), 2.0)
         msgs.append(f"{caster_name} 使用 {mv['skill_name']}，{EFFECT_CN[et]}")
     elif et == "heal":
         frac = min(max(float(mv["effect_value"] or 0.5), 0.05), 1.0)
@@ -170,8 +168,10 @@ def _apply_status_effect(caster, target, mv, msgs, target_foe_side):
         # 吸血：以威力折算伤害，按 effect_value 比例回血
         r = _rate(mv["skill_type"], target["types"])
         burn_c = bool(_status(caster) and _status(caster)["ailment"] == "burn")
+        cb = _CUR_SESS[0]["buffs"].get(caster["ref"], {})
+        tb = _CUR_SESS[0]["buffs"].get(target["ref"], {})
         dmg = _dmg(caster["stats"]["atk"], target["stats"]["def"], mv["power"] or 20, r,
-                   _CUR_SESS[0]["buffs"].get(caster["ref"], 1.0), burn=burn_c)
+                   cb.get("atk", 1.0), burn=burn_c, def_buff=tb.get("def", 1.0))
         dmg = min(dmg, target["hp"], BATTLE_CAP)
         target["hp"] -= dmg
         frac = min(max(float(mv["effect_value"] or 0.5), 0.05), 1.0)
@@ -244,7 +244,10 @@ def _moves_effect(moves, foe_types):
 def _pack_units(units, all_buffs):
     out = []
     for u in units:
-        d = {**u, "buff": all_buffs.get(u["ref"], 1.0), "fainted": u["hp"] <= 0}
+        b = all_buffs.get(u["ref"], {})
+        d = {**u, "buff": b.get("atk", 1.0), "def_buff": b.get("def", 1.0),
+             "buffs_atk": b.get("atk", 1.0), "buffs_def": b.get("def", 1.0),
+             "fainted": u["hp"] <= 0}
         out.append(d)
     return out
 
@@ -475,11 +478,12 @@ def _attack_step(attacker, defender, mv, sess, defender_foe_side, msgs):
             msgs.append(f"{attacker['name']} 的 {mv['skill_name']} 没有命中")
             return
         r = _rate(mv["skill_type"], defender["types"])
-        buff = sess["buffs"].get(attacker["ref"], 1.0)
+        buff = sess["buffs"].get(attacker["ref"], {}).get("atk", 1.0)     # v23 攻通道
+        def_buff = sess["buffs"].get(defender["ref"], {}).get("def", 1.0)  # v23 守方防通道
         st = _status(attacker)
         burn_a = bool(st and st["ailment"] == "burn")
         dmg = _dmg(attacker["stats"]["atk"], defender["stats"]["def"], mv["power"], r, buff,
-                   burn=burn_a)
+                   burn=burn_a, def_buff=def_buff)
         dmg = min(dmg, defender["hp"], BATTLE_CAP)
         defender["hp"] -= dmg
         eff = ("（效果拔群！）" if r >= 2 else "（效果不太好……）" if 0 < r < 1
@@ -492,7 +496,7 @@ def _attack_step(attacker, defender, mv, sess, defender_foe_side, msgs):
                 ail = mv["ailment"]
                 if ail == "tri":
                     ail = random.choice(["para", "sleep", "freeze"])
-                _try_inflict(defender, ail, msgs, foe_side=defender_foe_side)
+                _try_inflict(defender, ail, msgs, target_foe_side=defender_foe_side)
     else:
         _apply_status_effect(attacker, defender, mv, msgs, defender_foe_side)
 
@@ -578,36 +582,56 @@ def act(body: dict, tok=Depends(kid_auth)):
     result, badge, gift = "continue", None, None
     my_first = _first_order(my, foe, mv, fm)
 
-    def _my_step():
-        """我方行动步：毒结算→异常阻塞→攻击→击杀判定。返回 True=可继续敌方步。"""
+    def _my_faint():
+        """我方倒下：还有备用怪则换人，否则败北（v23：毒死/被打死同口径）。"""
+        nonlocal result
+        if sess.get("my_idx", 0) + 1 < len(sess["my"]):
+            sess["my_idx"] = sess.get("my_idx", 0) + 1
+            nxt = sess["my"][sess["my_idx"]]
+            # v5b：新上场 PP 全回满（原作换人 PP 独立；异常/敌方增益按会话延续）
+            nxt["pp"] = {m["id"]: int(m.get("max_pp") or 8) for m in nxt["moves"]}
+            msgs.append(f"上吧，{nxt['name']}！")
+        else:
+            result = "lose"
+
+    def _foe_down():
+        """对方倒下统一入口（v23：攻击致死与毒发致死同权）。返回 True=战斗结束。"""
         nonlocal result, badge, gift
+        msgs.append(f"对方的 {foe['name']} 倒下了！")
+        result, badge, gift = _on_foe_down(sess)
+        if gift:
+            msgs.append(f"🎁 道馆礼物到手：{gift['name']} 加入了你的队伍（封印中）！")
+        return result != "continue"
+
+    def _my_step():
+        """我方行动步：毒结算→倒下判定→异常阻塞→攻击→击杀判定。返回 True=可继续敌方步。"""
+        nonlocal result
         _poison_tick(my, msgs)
-        if my["hp"] > 0 and _can_act(my, msgs):
+        if my["hp"] <= 0:
+            # v23 修：毒发致死与攻击致死同权——不再进入出手，直接倒下/换人/败北
+            msgs.append(f"你的 {my['name']} 因中毒倒下！")
+            _my_faint()
+            return False
+        if _can_act(my, msgs):
             _attack_step(my, foe, mv, sess, True, msgs)
         if foe["hp"] <= 0:
-            msgs.append(f"对方的 {foe['name']} 倒下了！")
-            result, badge, gift = _on_foe_down(sess)
-            if gift:
-                msgs.append(f"🎁 道馆礼物到手：{gift['name']} 加入了你的队伍（封印中）！")
+            _foe_down()
             return False
         return result == "continue" and foe["hp"] > 0 and my["hp"] > 0
 
     def _foe_step():
-        """对方行动步：毒结算→异常阻塞→攻击→我方倒下换人/败北。"""
+        """对方行动步：毒结算→倒下判定→异常阻塞→攻击→我方倒下换人/败北。"""
         nonlocal result
         _poison_tick(foe, msgs, foe_side=True)
-        if foe["hp"] > 0 and my["hp"] > 0 and _can_act(foe, msgs, foe_side=True):
+        if foe["hp"] <= 0:
+            # v23 修：对方毒发致死同样判负（毒死对面也是战术！）
+            _foe_down()
+            return
+        if my["hp"] > 0 and _can_act(foe, msgs, foe_side=True):
             _attack_step(foe, my, fm, sess, False, msgs)
         if my["hp"] <= 0:
             msgs.append(f"你的 {my['name']} 倒下了！")
-            if sess.get("my_idx", 0) + 1 < len(sess["my"]):
-                sess["my_idx"] = sess.get("my_idx", 0) + 1
-                nxt = sess["my"][sess["my_idx"]]
-                # v5b：新上场 PP 全回满（原作换人 PP 独立；异常/敌方增益按会话延续）
-                nxt["pp"] = {m["id"]: int(m.get("max_pp") or 8) for m in nxt["moves"]}
-                msgs.append(f"上吧，{nxt['name']}！")
-            else:
-                result = "lose"
+            _my_faint()
 
     if my_first:
         if _my_step():

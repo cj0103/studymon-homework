@@ -431,10 +431,16 @@ function eventOf(l){
   return {kind, who, v};
 }
 function buffBadges(u){
-  const b = (BS.buffs||{})[u.ref];
-  if(b==null || Math.abs(b-1)<1e-9) return "";
-  const t = b>1 ? `攻↑×${(+b.toFixed(2)).toString().replace(/\.?0+$/,"")}` : `攻↓×${(+b.toFixed(2)).toString().replace(/\.?0+$/,"")}`;
-  return `<span class="bb ${b>1?"bb-buff":"bb-debuff"}">${t}</span>`;
+  // v23：buffs 拆攻/防双通道，后端 _pack_units 透出 buffs_atk / buffs_def，各渲染一枚徽章
+  const fmt = b => (+b.toFixed(2)).toString().replace(/\.?0+$/,"");
+  const one = (b, name) => {
+    if(b==null || Math.abs(b-1)<1e-9) return "";
+    return `<span class="bb ${b>1?"bb-buff":"bb-debuff"}">${name}${b>1?"↑":"↓"}×${fmt(b)}</span>`;
+  };
+  const bk = (BS.buffs||{})[u.ref] || {};
+  const ba = u.buffs_atk != null ? u.buffs_atk : (typeof bk==="object" ? bk.atk : null);
+  const bd = u.buffs_def != null ? u.buffs_def : (typeof bk==="object" ? bk.def : null);
+  return one(ba,"攻") + one(bd,"防");
 }
 const stBadgeHtml = st => st?` <span class="stbadge st-${st.ailment}" title="${AIL_CN[st.ailment]||''}">${AIL_ICON[st.ailment]||""}${AIL_CN[st.ailment]||""}</span>`:"";
 

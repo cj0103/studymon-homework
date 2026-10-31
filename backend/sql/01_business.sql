@@ -19,7 +19,10 @@ INSERT IGNORE INTO sys_config (cfg_key, cfg_value, memo) VALUES
 ('exp_split_mode', 'even', 'even=队伍平分 / lead=主力60%后备各20%'),
 ('weekly_catch_times', '3', '每周野生捕获次数'),
 ('battle_weekday_open', '1', '测试期：学习日也开放道馆/捕捉 1=开 0=关(仅周末)'),
-('team_max', '3', '出战队伍上限');
+('team_max', '3', '出战队伍上限'),
+('catchup_base', '1.30', 'v22追赶倍率指数底数：每差1级上场经验×1.30（≤1=关闭加成）'),
+('catchup_max_mult', '8', 'v22追赶倍率封顶（整数，家长可调2~15）'),
+('catchup_dead', '0', 'v22追赶死区：差距≤N级不吃加成（0=关，到基准级自动取消恒有）');
 
 CREATE TABLE IF NOT EXISTS task_template (
     id INT PRIMARY KEY AUTO_INCREMENT,

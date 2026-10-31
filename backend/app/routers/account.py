@@ -136,18 +136,25 @@ def delete_device(token: str, tok=Depends(parent_auth)):
     db.x("DELETE FROM device_token WHERE token=%s", (token,))
     return {"ok": True}
 
+import datetime as _dt  # 模块级：v21 测试可 monkeypatch acct._dt mock 日期
+
 @router.get("/tasks")
 def list_tasks(tok=Depends(parent_auth)):
     # v19：category 不再返回（纯展示字段无业务用途；表列保留避免迁移）
     # v19b 家长定稿：停用任务不展示（停用=不占用列表；恢复走 PUT enabled=true）
-    return db.q("SELECT id,task_name,icon,enabled,sort FROM task_template "
+    # v21：weekend_only=1 的任务仅周六/周日出现在孩子端（家长端恒可见，带徽标）
+    return db.q("SELECT id,task_name,icon,enabled,sort,weekend_only FROM task_template "
                 "WHERE parent_id=%s AND enabled=1 ORDER BY sort,id", (tok["uid"],))
 
 @router.get("/child/tasks")
 def child_tasks(tok=Depends(kid_auth)):
     stu = db.q("SELECT parent_id FROM student_user WHERE id=%s", (tok["uid"],))[0]
+    # v21 双休口径与道馆挑战/野外捕捉开放日一致：weekday()>=5（周六、周日）
+    weekend = _dt.date.today().weekday() >= 5
+    cond = "" if weekend else " AND weekend_only=0"
     return db.q("SELECT id,task_name,icon FROM task_template "
-                "WHERE parent_id=%s AND enabled=1 ORDER BY sort,id", (stu["parent_id"],))
+                "WHERE parent_id=%s AND enabled=1" + cond + " ORDER BY sort,id",
+                (stu["parent_id"],))
 
 @router.post("/tasks")
 def add_task(body: TaskIn, tok=Depends(parent_auth)):
@@ -176,6 +183,10 @@ def update_task(tid: int, body: dict, tok=Depends(parent_auth)):
                 "WHERE id=%s AND parent_id=%s", (tid, tok["uid"]))
     if not rows:
         raise HTTPException(404, "没有这个任务")
+    # v21：weekend_only 独立开关（仿 enabled 二值口径）
+    if "weekend_only" in body:
+        db.x("UPDATE task_template SET weekend_only=%s WHERE id=%s",
+             (1 if body["weekend_only"] else 0, tid))
     if "task_name" in body:
         name = str(body["task_name"]).strip()
         if not name:
@@ -191,7 +202,7 @@ def update_task(tid: int, body: dict, tok=Depends(parent_auth)):
     if "enabled" in body:
         db.x("UPDATE task_template SET enabled=%s WHERE id=%s",
              (1 if body["enabled"] else 0, tid))
-    return db.q("SELECT id,task_name,icon,enabled,sort FROM task_template WHERE id=%s", (tid,))[0]
+    return db.q("SELECT id,task_name,icon,enabled,sort,weekend_only FROM task_template WHERE id=%s", (tid,))[0]
 
 @router.delete("/tasks/{tid}")
 def delete_task(tid: int, tok=Depends(parent_auth)):
@@ -204,7 +215,9 @@ def delete_task(tid: int, tok=Depends(parent_auth)):
 EDITABLE = {"daily_base_exp", "daily_cap", "fast_deadline", "fast_multiplier",
             "streak_bonus_days", "streak_bonus_exp", "penalty_options",
             "exp_split_mode", "study_weekdays", "battle_weekday_open",
-            "daily_catch_limit", "new_pokemon_weight_mult"}
+            "daily_catch_limit", "new_pokemon_weight_mult",
+            # v22 追赶加成三参数（exp.exp_permille 消费，缺行走代码默认）
+            "catchup_base", "catchup_max_mult", "catchup_dead"}
 
 @router.get("/config")
 def get_config(tok=Depends(parent_auth)):

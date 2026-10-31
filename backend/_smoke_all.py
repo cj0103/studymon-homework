@@ -34,7 +34,11 @@ try:
     print("[DRIVER] ===== v12 专项开始 =====", flush=True)
     _g = runpy.run_path("_v12_ui_test.py", run_name="__main__")
     print("[DRIVER] ===== v15 专项开始 =====", flush=True)
-    runpy.run_path("_v15_battle_test.py", run_name="__main__")
+    _t15 = runpy.run_path("_v15_battle_test.py", run_name="__main__")
+    _f15 = _t15.get("FAILS", [])
+    if _f15:
+        print("[DRIVER] v15 专项 FAILS:", _f15, flush=True)
+        raise SystemExit(1)
     print("[DRIVER] ===== v17 专项开始 =====", flush=True)
     _t17 = runpy.run_path("_v17_dexline_test.py", run_name="__main__")
     _f17 = _t17.get("FAILS", [])
@@ -47,6 +51,18 @@ try:
     if _f19:
         print("[DRIVER] v19 专项 FAILS:", _f19, flush=True)
         raise SystemExit(1)
+    print("[DRIVER] ===== v21 专项开始 =====", flush=True)
+    _t21 = runpy.run_path("_v21_weekend_test.py", run_name="__main__")
+    _f21 = _t21.get("FAILS", [])
+    if _f21:
+        print("[DRIVER] v21 专项 FAILS:", _f21, flush=True)
+        raise SystemExit(1)
+    print("[DRIVER] ===== v22 专项开始 =====", flush=True)
+    _t22 = runpy.run_path("_v22_catchup_test.py", run_name="__main__")
+    _f22 = _t22.get("FAILS", [])
+    if _f22:
+        print("[DRIVER] v22 专项 FAILS:", _f22, flush=True)
+        raise SystemExit(1)
     # v16：v12 把队伍清空后未恢复（历史遗留，v15 组队依赖此修复）
     import json as _json
     from app import db as _d
@@ -57,7 +73,7 @@ try:
         _d.x("UPDATE trainer_pokemon SET is_in_team=1, slot=0, learned_skill_json=%s WHERE id=%s",
              (_json.dumps(_mvv), _t[0]["id"]))
         print("[DRIVER] v16 恢复出战 1 只有招怪 id=", _t[0]["id"], flush=True)
-    print("[DRIVER] ALL PASSED (smoke + v12 + v15 + v17 + v19)", flush=True)
+    print("[DRIVER] ALL PASSED (smoke + v12 + v15 + v17 + v19 + v21 + v22)", flush=True)
 except SystemExit as e:
     _rc = e.code or 0
 except BaseException:
